@@ -1,0 +1,10 @@
+image:
+  file: .gitpod.Dockerfile
+tasks:
+- command: "cargo test"
+- command: "cargo watch -x check"
+  openIn: bottom
+  openMode: split-right
+vscode:
+  extensions:
+    - bungcip.better-toml@0.3.2:3QfgGxxYtGHfJKQU7H0nEw==

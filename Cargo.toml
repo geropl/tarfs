@@ -1,0 +1,9 @@
+[package]
+name = "tarfs"
+version = "0.1.0"
+authors = ["geropl <gero.posmyk-leinemann@typefox.io>"]
+edition = "2018"
+
+[dependencies]
+fuse = "0.3.1"
+tar = "0.4.26"
