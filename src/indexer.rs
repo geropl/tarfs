@@ -7,24 +7,48 @@ use std::collections::BTreeMap;
 
 use tar::{Archive};
 
-pub struct TarIndex {
-    map: BTreeMap<String, Box<TarIndexEntry>>
+pub struct TarIndex<'f> {
+    _file: &'f File,
+    archive: tar::Archive<&'f File>,
+    map: BTreeMap<String, TarIndexEntry>
 }
 
-impl TarIndex {
-    fn new() -> TarIndex {
-        TarIndex {
+impl<'f> TarIndex<'f> {
+    pub fn new_from(file: &File) -> Result<TarIndex, io::Error> {
+        let mut index = TarIndex {
+            _file: file,
+            archive: Archive::new(file),
             map: BTreeMap::new()
-        }
+        };
+        TarIndex::scan(&mut index.archive, &mut index.map)?;
+        Ok(index)
     }
 
-    fn insert(&mut self, new_entry: Box<TarIndexEntry>) {
+    fn scan(archive: &mut tar::Archive<&File>, map: &mut BTreeMap<String, TarIndexEntry>) -> Result<(), io::Error> {
+        for entry in archive.entries()? {
+            let index_entry = TarIndex::entry_to_index_entry(entry?)?;
+            TarIndex::insert_into(map, index_entry);
+        }
+        Ok(())
+    }
+
+    fn insert_into(map: &mut BTreeMap<String, TarIndexEntry>, new_entry: TarIndexEntry) {
         let s = String::from(new_entry.path.to_str().unwrap());
-        self.map.insert(s, new_entry);
+        map.insert(s, new_entry);
+    }
+
+    fn entry_to_index_entry(entry: tar::Entry<'_, &File>) -> Result<TarIndexEntry, io::Error> {
+        let link_name = entry.link_name()?.map(|l| l.to_path_buf());
+        Ok(TarIndexEntry{
+            header_offset: entry.raw_header_position(),
+            raw_file_offset: entry.raw_file_position(),
+            path: PathBuf::from(entry.path()?),
+            link_name,
+        })
     }
 }
 
-impl fmt::Display for TarIndex {
+impl fmt::Display for TarIndex<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut content = String::new();
         for entry in self.map.iter() {
@@ -44,48 +68,5 @@ pub struct TarIndexEntry {
 impl fmt::Display for TarIndexEntry {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Entry: \n{{ header: {}, file: {}, path: {:?}, link_name: {:?} }}", self.header_offset, self.raw_file_offset, self.path, self.link_name)
-    }
-}
-
-pub struct TarIndexer<'a> {
-    file: &'a File
-}
-
-impl<'a> TarIndexer<'a> {
-    pub fn new(file: &File) -> TarIndexer {
-        TarIndexer{
-            file
-        }
-    }
-
-    pub fn index(&self) -> Result<TarIndex, io::Error> {
-        let mut archive = Archive::new(self.file);
-        let mut index = TarIndex::new();
-        for entry in archive.entries()? {
-            let e = entry.unwrap();
-            let index_entry = TarIndexer::entry_to_index_entry(&e)?;
-            index.insert(index_entry);
-        }
-        Ok(index)
-    }
-
-    fn entry_to_index_entry(entry: &tar::Entry<'_, &std::fs::File>) -> Result<Box<TarIndexEntry>, io::Error> {
-        let path = entry.path()?;
-        let link_name = match entry.link_name() {
-            Err(e) => {
-                println!("f.link_name(): {}", e);
-                None
-            },
-            Ok(p) => match p {
-                None => None,
-                Some(l) => Some(l.to_path_buf())
-            },
-        };
-        Ok(Box::new(TarIndexEntry{
-            header_offset: entry.raw_header_position(),
-            raw_file_offset: entry.raw_file_position(),
-            path: path.to_path_buf(),
-            link_name
-        }))
     }
 }

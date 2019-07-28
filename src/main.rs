@@ -40,7 +40,7 @@ use std::fs::File;
 use std::path::Path;
 
 mod indexer;
-use indexer::TarIndexer;
+use indexer::TarIndex;
 
 fn main() {
     let first_arg = match args_os().skip(1).next() {
@@ -59,13 +59,9 @@ fn main() {
         Ok(f) => f,
     };
 
-    let indexer = TarIndexer::new(&file);
-    let index = match indexer.index() {
-        Err(v) => {
-            println!("Error indexing archive: {}", v);
-            return
-        },
-        Ok(idx) => idx,
+    let index = match TarIndex::new_from(&file) {
+        Err(e) => panic!("Error building index: {}", e),
+        Ok(idx) => idx
     };
     println!("{}", index);
 
