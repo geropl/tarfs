@@ -10,7 +10,7 @@ use libc::{ENOENT};
 use fuse;
 use fuse::{FileAttr, FileType, Filesystem, Request, ReplyAttr, ReplyEntry, ReplyDirectory};
 
-use crate::tarindex::{TarIndex, TarIndexEntry};
+use super::tarindex::{TarIndex, TarIndexEntry};
 
 pub struct TarFs<'f> {
     index: &'f TarIndex<'f>
@@ -24,6 +24,8 @@ impl<'f> TarFs<'f> {
     }
 
     pub fn mount(self, mountpoint: &Path) {
+        // TODO Would be cool to use fuse::spawn_mount here..
+        // But moving TarFs across thread boundaries seems impossible
         fuse::mount(self, &mountpoint, &[]).unwrap();
     }
 

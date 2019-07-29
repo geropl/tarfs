@@ -4,6 +4,14 @@ version = "0.1.0"
 authors = ["geropl <gero.posmyk-leinemann@typefox.io>"]
 edition = "2018"
 
+[lib]
+name = "tarfslib"
+path = "src/lib/mod.rs"
+
+[[bin]]
+name = "tarfs"
+path = "src/main.rs"
+
 [dependencies]
 fuse = "0.3.1"
 tar = "0.4.26"
