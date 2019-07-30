@@ -33,7 +33,10 @@ impl TarFsTest {
         let mountpoint = PathBuf::from(self.mountpoint.to_str().unwrap());
 
         thread::spawn(move || {
-            tarfslib::setup_tar_mount(&filename, &mountpoint).unwrap();
+            match tarfslib::setup_tar_mount(&filename, &mountpoint) {
+                Ok(_) => (),
+                Err(e) => println!("setup_tar_mount error: {}", e)
+            }
         });
 
         Ok(())
@@ -44,11 +47,11 @@ impl TarFsTest {
             .args(&["umount", self.mountpoint.to_str().unwrap()])
             .output() {
             Ok(_) => (),
-            Err(e) => println!("{}", e),
+            Err(e) => println!("sudo umount error: {}", e),
         };
         match fs::remove_dir(&self.mountpoint) {
             Ok(_) => (),
-            Err(e) => println!("{}", e),
+            Err(_) => (),   // ignore any errors here, just cleanup
         };
     }
 }

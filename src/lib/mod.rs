@@ -19,13 +19,13 @@ pub fn setup_tar_mount(filepath: &Path, mountpoint: &Path) -> Result<(), Box<std
     if mountpoint.exists() {
         fs::remove_dir(&mountpoint)?;
     }
-    fs::create_dir(&mountpoint)?;
+    fs::create_dir_all(&mountpoint)?;
 
     let file = File::open(filepath)?;
     let index = TarIndex::new_from(&file)?;
 
     let tar_fs = TarFs::new(&index);
-    tar_fs.mount(mountpoint);
+    tar_fs.mount(mountpoint)?;
 
     Ok(())
 }

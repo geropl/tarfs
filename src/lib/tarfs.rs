@@ -2,6 +2,7 @@
 use std::path::{Path};
 use std::ffi::{OsStr, OsString};
 use std::{path::PathBuf};
+use std::io;
 
 use time::Timespec;
 
@@ -9,6 +10,8 @@ use libc::{ENOENT};
 
 use fuse;
 use fuse::{FileAttr, FileType, Filesystem, Request, ReplyAttr, ReplyEntry, ReplyDirectory};
+
+use tar::EntryType;
 
 use super::tarindex::{TarIndex, TarIndexEntry};
 
@@ -23,10 +26,10 @@ impl<'f> TarFs<'f> {
         }
     }
 
-    pub fn mount(self, mountpoint: &Path) {
+    pub fn mount(self, mountpoint: &Path) -> io::Result<()> {
         // TODO Would be cool to use fuse::spawn_mount here..
         // But moving TarFs across thread boundaries seems impossible
-        fuse::mount(self, &mountpoint, &[]).unwrap();
+        fuse::mount(self, &mountpoint, &[])
     }
 
     fn attr_default(&self, ino: u64) -> FileAttr {
@@ -51,10 +54,16 @@ impl<'f> TarFs<'f> {
 
     fn attrs_for_entry(&self, entry: &TarIndexEntry) -> FileAttr {
         let mut attr = self.attr_default(index_to_inode(entry.index));
-        attr.kind = match entry.is_dir() {
-            true => FileType::Directory,
-            false => FileType::RegularFile
-        };
+        attr.kind = tar_entrytype_to_filetype(entry);
+        attr.perm = entry.mode as u16;
+        attr.uid = entry.uid as u32;
+        attr.gid = entry.gid as u32;
+        attr.rdev = 0;
+        attr.nlink = 1;
+        attr.atime = Timespec::new(entry.mtime as i64, 0);
+        attr.mtime = Timespec::new(entry.mtime as i64, 0);
+        attr.ctime = Timespec::new(entry.mtime as i64, 0);
+        attr.size = entry.filesize;
         // println!("kind: {:?}", attr.kind);
         attr
     }
@@ -71,7 +80,7 @@ impl<'f> TarFs<'f> {
             let index = entry.index;
             let inode = index_to_inode(index);
             let offset = count_offset as i64 + c;
-            let file_type = if entry.is_dir() { FileType::Directory } else { FileType::RegularFile };
+            let file_type = tar_entrytype_to_filetype(entry);
             let base = match entry.path.strip_prefix(prefix) {
                 Err(_) => continue,
                 Ok(base) => base
@@ -92,6 +101,19 @@ impl<'f> TarFs<'f> {
             Some(e) => Some(PathBuf::from(&e.path)),
             None => None
         }
+    }
+}
+
+fn tar_entrytype_to_filetype(entry: &TarIndexEntry) -> FileType {
+    match entry.entrytype {
+        EntryType::Regular => FileType::RegularFile,
+        EntryType::Directory => FileType::Directory,
+        EntryType::Symlink => FileType::Symlink,
+        t => {
+            println!("Unsupported EntryType: {:?}", t);
+            FileType::RegularFile
+        },
+        // EntryType::Link => FileType::
     }
 }
 
@@ -177,7 +199,7 @@ impl<'f> Filesystem for TarFs<'f> {
             },
             Some(e) => e
         };
-        if !entry.is_dir() {
+        if entry.entrytype != EntryType::Directory {
             println!("readdir: ino {}, index {} is no dir!", ino, entry.index);
             return
         }
