@@ -18,5 +18,5 @@ tar = "0.4.26"
 time = "0.1.42"
 libc = "0.2.60"
 
- [dev-dependencies]
- pretty_assertions = "0.6.1"
+[dev-dependencies]
+pretty_assertions = "0.6.1"

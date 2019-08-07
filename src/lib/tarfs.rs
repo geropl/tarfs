@@ -1,19 +1,21 @@
 
 use std::path::{Path};
-use std::ffi::{OsStr, OsString};
+use std::ffi::{OsStr};
 use std::{path::PathBuf};
 use std::io;
+#[allow(unused_imports)]
+use std::cell::RefCell;
 
 use time::Timespec;
 
 use libc::{ENOENT};
 
 use fuse;
-use fuse::{FileAttr, FileType, Filesystem, Request, ReplyAttr, ReplyEntry, ReplyDirectory};
+use fuse::{FileType, Filesystem, Request, ReplyAttr, ReplyEntry, ReplyDirectory};
 
 use tar::EntryType;
 
-use super::tarindex::{TarIndex, TarIndexEntry};
+use super::tarindex::{TarIndex};
 
 pub struct TarFs<'f> {
     index: &'f TarIndex<'f>
@@ -31,90 +33,6 @@ impl<'f> TarFs<'f> {
         // But moving TarFs across thread boundaries seems impossible
         fuse::mount(self, &mountpoint, &[])
     }
-
-    fn attr_default(&self, ino: u64) -> FileAttr {
-        let ts = time::now().to_timespec();
-        FileAttr {
-            ino,
-            size: 0,
-            blocks: 0,
-            atime: ts,
-            mtime: ts,
-            ctime: ts,
-            crtime: ts,
-            kind: FileType::Directory,
-            perm: 0o777,
-            nlink: 0,
-            uid: 33333,
-            gid: 33333,
-            rdev: 0,
-            flags: 0,
-        }
-    }
-
-    fn attrs_for_entry(&self, entry: &TarIndexEntry) -> FileAttr {
-        let mut attr = self.attr_default(index_to_inode(entry.index));
-        attr.kind = tar_entrytype_to_filetype(entry);
-        attr.perm = entry.mode as u16;
-        attr.uid = entry.uid as u32;
-        attr.gid = entry.gid as u32;
-        attr.rdev = 0;
-        attr.nlink = 1;
-        attr.atime = Timespec::new(entry.mtime as i64, 0);
-        attr.mtime = Timespec::new(entry.mtime as i64, 0);
-        attr.ctime = Timespec::new(entry.mtime as i64, 0);
-        attr.size = entry.filesize;
-        // println!("kind: {:?}", attr.kind);
-        attr
-    }
-
-    fn add_entries_to_reply(&self, reply: &mut ReplyDirectory, prefix: &Path, entry_offset: usize, count_offset: i64) {
-        let entries = self.index.get_entries_by_path_prefix(prefix);
-        let len = entries.len();
-        if entry_offset >= len {
-            return
-        }
-
-        let mut c: i64 = 1;
-        for entry in &entries[entry_offset..] {
-            let index = entry.index;
-            let inode = index_to_inode(index);
-            let offset = count_offset as i64 + c;
-            let file_type = tar_entrytype_to_filetype(entry);
-            let base = match entry.path.strip_prefix(prefix) {
-                Err(_) => continue,
-                Ok(base) => base
-            };
-            println!("reply.add inode {}, offset {}, file_type {:?}, base {} ", inode, offset, file_type, base.display());
-            reply.add(inode, offset, file_type, &OsString::from(&base));
-            c = c + 1;
-        }
-        println!("readdir: {} entries ", len);
-    }
-
-    fn path_for_inode(&self, parent: u64) -> Option<PathBuf> {
-        if parent == 1 {
-            return Some(PathBuf::from("."));
-        }
-
-        match self.index.get_entry_by_index(parent) {
-            Some(e) => Some(PathBuf::from(&e.path)),
-            None => None
-        }
-    }
-}
-
-fn tar_entrytype_to_filetype(entry: &TarIndexEntry) -> FileType {
-    match entry.entrytype {
-        EntryType::Regular => FileType::RegularFile,
-        EntryType::Directory => FileType::Directory,
-        EntryType::Symlink => FileType::Symlink,
-        t => {
-            println!("Unsupported EntryType: {:?}", t);
-            FileType::RegularFile
-        },
-        // EntryType::Link => FileType::
-    }
 }
 
 impl<'f> Filesystem for TarFs<'f> {
@@ -122,89 +40,97 @@ impl<'f> Filesystem for TarFs<'f> {
         let path = PathBuf::from(name);
         println!("lookup(parent={}, name={})", parent, path.to_str().unwrap());
 
-        let parent_path = match self.path_for_inode(parent) {
-            Some(e) => e,
+        let node = match self.index.lookup_child(parent, PathBuf::from(name)) {
+            Some(a) => a,
             None => {
                 reply.error(ENOENT);
                 println!("lookup: no parent entry");
                 return;
-            }
-        };
-
-        let child_path = parent_path.as_path().join(path);
-        println!("child_path: {}", child_path.display());
-        let entry = match self.index.get_entry_by_path(&child_path) {
-            Some(e) => e,
-            None => {
-                reply.error(ENOENT);
-                println!("lookup: no child entry");
-                return;
             },
         };
-
-        let attr = self.attrs_for_entry(entry);
-        reply.entry(&ttl(10), &attr, 0);
+        reply.entry(&ttl(10), &node.attrs(), 0);
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         println!("getattr(ino={})", ino);
 
-        let mut attr = self.attr_default(ino);
-        if ino == 1 {
-            attr.kind = FileType::Directory;
-            attr.perm = 0o777;
-            reply.attr(&ttl(10), &attr);
-            return
-        }
-
-        //  else {
-        //     reply.error(ENOSYS);
-        // }
-
-        let entry = match self.index.get_entry_by_index(ino) {
+        let node = match self.index.get_node_by_id(ino) {
             None => {
                 reply.error(ENOENT);
                 println!("lookup: no entry");
                 return
             },
-            Some(e) => e
+            Some(n) => n,
         };
 
-        attr = self.attrs_for_entry(entry);
-        reply.attr(&ttl(10), &attr);
+        reply.attr(&ttl(10), &node.attrs());
     }
 
     fn readdir(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64, mut reply: ReplyDirectory) {
         println!("readdir(ino={}, fh={}, offset={})", ino, fh, offset);
 
-        if ino == 1 {
-            if offset <= 1 {
-                reply.add(1, 0, FileType::Directory, ".");
-                reply.add(1, 1, FileType::Directory, "..");
-                self.add_entries_to_reply(&mut reply, &Path::new("."), 0, 2);
-            } else {
-                self.add_entries_to_reply(&mut reply, &Path::new("."), offset as usize, offset);
-            }
-
-            reply.ok();
-            return
-        }
-
-        let index = inode_to_index(ino);
-        let entry = match self.index.get_entry_by_index(index) {
+        let node = match self.index.get_node_by_id(ino) {
             None => {
                 reply.error(ENOENT);
                 println!("readdir: no entry");
                 return
             },
-            Some(e) => e
+            Some(n) => n,
         };
-        if entry.entrytype != EntryType::Directory {
-            println!("readdir: ino {}, index {} is no dir!", ino, entry.index);
+
+        if node.entry.ftype != EntryType::Directory {
+            println!("readdir: ino {}, index {} is no dir!", ino, node.entry.index);
             return
         }
 
-        self.add_entries_to_reply(&mut reply, &entry.path.as_path(), offset as usize, 0);
+        let mut out_off: i64 = 1;
+        let get = |off: &mut i64| -> i64 {
+            let res = *off;
+            *off += 1;
+            res
+        };
+
+        let mut full;
+        if offset == 0 {
+            let off = get(&mut out_off);
+            let kind = FileType::Directory;
+            full = reply.add(node.ino(), off, kind, ".");
+            println!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, ".");
+            if full {
+                reply.ok();
+                return
+            }
+        }
+
+        if offset <= 1 {
+            // Handle fs root: same ino as
+            let ino = match node.parent_id {
+                None => node.ino(),
+                Some(ino) => ino,
+            };
+
+            let off = get(&mut out_off);
+            let kind = FileType::Directory;
+            full = reply.add(ino, off, kind, "..");
+            println!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, "..");
+            if full {
+                reply.ok();
+                return
+            }
+        }
+
+        let c_offset = (offset - 2).max(0) as usize;
+        for child in &node.children.borrow()[c_offset..] {
+            let ino = child.ino();
+            let kind = child.attrs().kind;
+            let name = &child.entry.name;
+            let off = get(&mut out_off);
+            println!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, name.display());
+            full = reply.add(ino, off, kind, name);
+            if full {
+                break;
+            }
+        }
         reply.ok();
     }
 
@@ -223,12 +149,4 @@ impl<'f> Filesystem for TarFs<'f> {
 
 fn ttl(secs: i64) -> Timespec {
     Timespec::new(secs, 0)
-}
-
-fn index_to_inode(index: u64) -> u64 {
-    index + 2
-}
-
-fn inode_to_index(ino: u64) -> u64 {
-    ino - 2
 }
