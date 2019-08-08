@@ -6,6 +6,10 @@ extern crate time;
 // index
 extern crate tar;
 
+// both
+extern crate log;
+extern crate env_logger;
+
 mod tarindex;
 mod tarfs;
 

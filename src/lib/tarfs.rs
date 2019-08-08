@@ -15,6 +15,9 @@ use fuse::{FileType, Filesystem, Request, ReplyAttr, ReplyEntry, ReplyDirectory}
 
 use tar::EntryType;
 
+use log;
+use log::{debug, info, error, trace};
+
 use super::tarindex::{TarIndex};
 
 pub struct TarFs<'f> {
@@ -31,20 +34,23 @@ impl<'f> TarFs<'f> {
     pub fn mount(self, mountpoint: &Path) -> io::Result<()> {
         // TODO Would be cool to use fuse::spawn_mount here..
         // But moving TarFs across thread boundaries seems impossible
-        fuse::mount(self, &mountpoint, &[])
+        info!("tarfs mounted.");
+        let res = fuse::mount(self, &mountpoint, &[]);
+        info!("tarfs unmounted.");
+        res
     }
 }
 
 impl<'f> Filesystem for TarFs<'f> {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let path = PathBuf::from(name);
-        println!("lookup(parent={}, name={})", parent, path.to_str().unwrap());
+        debug!("lookup(parent={}, name={})", parent, path.to_str().unwrap());
 
         let node = match self.index.lookup_child(parent, PathBuf::from(name)) {
             Some(a) => a,
             None => {
                 reply.error(ENOENT);
-                println!("lookup: no parent entry");
+                debug!("lookup: no parent entry");
                 return;
             },
         };
@@ -52,12 +58,12 @@ impl<'f> Filesystem for TarFs<'f> {
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
-        println!("getattr(ino={})", ino);
+        debug!("getattr(ino={})", ino);
 
         let node = match self.index.get_node_by_id(ino) {
             None => {
                 reply.error(ENOENT);
-                println!("lookup: no entry");
+                error!("lookup: no entry");
                 return
             },
             Some(n) => n,
@@ -67,19 +73,19 @@ impl<'f> Filesystem for TarFs<'f> {
     }
 
     fn readdir(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64, mut reply: ReplyDirectory) {
-        println!("readdir(ino={}, fh={}, offset={})", ino, fh, offset);
+        debug!("readdir(ino={}, fh={}, offset={})", ino, fh, offset);
 
         let node = match self.index.get_node_by_id(ino) {
             None => {
                 reply.error(ENOENT);
-                println!("readdir: no entry");
+                error!("readdir: no entry");
                 return
             },
             Some(n) => n,
         };
 
         if node.entry.ftype != EntryType::Directory {
-            println!("readdir: ino {}, index {} is no dir!", ino, node.entry.index);
+            error!("readdir: ino {}, index {} is no dir!", ino, node.entry.index);
             return
         }
 
@@ -95,7 +101,7 @@ impl<'f> Filesystem for TarFs<'f> {
             let off = get(&mut out_off);
             let kind = FileType::Directory;
             full = reply.add(node.ino(), off, kind, ".");
-            println!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, ".");
+            trace!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, ".");
             if full {
                 reply.ok();
                 return
@@ -112,7 +118,7 @@ impl<'f> Filesystem for TarFs<'f> {
             let off = get(&mut out_off);
             let kind = FileType::Directory;
             full = reply.add(ino, off, kind, "..");
-            println!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, "..");
+            trace!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, "..");
             if full {
                 reply.ok();
                 return
@@ -125,7 +131,7 @@ impl<'f> Filesystem for TarFs<'f> {
             let kind = child.attrs().kind;
             let name = &child.entry.name;
             let off = get(&mut out_off);
-            println!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, name.display());
+            trace!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, name.display());
             full = reply.add(ino, off, kind, name);
             if full {
                 break;
@@ -134,16 +140,27 @@ impl<'f> Filesystem for TarFs<'f> {
         reply.ok();
     }
 
-    // fn read(&mut self, _req: &Request, ino: u64, fh: u64, offset: u64, size: uint, reply: ReplyData) {
-    //     println!("read(ino={}, fh={}, offset={}, size={})", ino, fh, offset, size);
-    //     for (key, &inode) in self.inodes.iter() {
-    //         if inode == ino {
-    //             let value = self.tree.get(key).unwrap();
-    //             reply.data(value.to_pretty_str().as_bytes());
-    //             return;
-    //         }
-    //     }
-    //     reply.error(ENOENT);
+    // fn read(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64, size: u32, mut reply: ReplyData) {
+    //     debug!("read(ino={}, fh={}, offset={}, size={})", ino, fh, offset, size);
+
+    //     let node = match self.index.get_node_by_id(ino) {
+    //         None => {
+    //             reply.error(ENOENT);
+    //             error!("lookup: no entry");
+    //             return
+    //         },
+    //         Some(n) => n,
+    //     };
+
+    //     reply.da
+    //     // for (key, &inode) in self.inodes.iter() {
+    //     //     if inode == ino {
+    //     //         let value = self.tree.get(key).unwrap();
+    //     //         reply.data(value.to_pretty_str().as_bytes());
+    //     //         return;
+    //     //     }
+    //     // }
+    //     // reply.error(ENOENT);
     // }
 }
 

@@ -1,9 +1,13 @@
+extern crate env_logger;
+
 mod lib;
 
 use std::env;
 use std::path::Path;
 
 fn main() -> Result<(), Box<std::error::Error>>  {
+    env_logger::init();
+
     let args: Vec<String> = env::args().collect();
     let (filename, mountpoint) = match args.as_slice() {
         [_, ref filename, ref mountpoint] => Ok((Path::new(filename), Path::new(mountpoint))),

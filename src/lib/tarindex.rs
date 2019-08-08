@@ -249,7 +249,7 @@ impl TarIndexer {
                 name: PathBuf::from("."),
                 path: PathBuf::from("./"),
                 link_name: None,
-                filesize: 4096,
+                filesize: 0,
                 mode: 0o777,
                 uid: 33333,
                 gid: 33333,
