@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::fmt;
 use std::io;
+use std::io::{Seek, SeekFrom, Read};
 use std::{path::Path, path::PathBuf};
 use std::option;
 use std::collections::BTreeMap;
@@ -9,9 +10,12 @@ use std::cell::{RefCell};
 use std::str::Utf8Error;
 use std::vec::Vec;
 use std::ffi::{OsStr};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use time::Timespec;
-use std::time::{SystemTime, UNIX_EPOCH};
+
+use log;
+use log::{trace, info, error};
 
 use fuse;
 
@@ -19,7 +23,7 @@ type PathMap = BTreeMap<PathBuf, Rc<Node>>;
 type IndexMap = BTreeMap<u64, Rc<Node>>;
 
 pub struct TarIndex<'f> {
-    _file: &'f File,
+    file: &'f File,
     archive: tar::Archive<&'f File>,
     map: PathMap,
     index_map: IndexMap,
@@ -28,7 +32,7 @@ pub struct TarIndex<'f> {
 impl<'f> TarIndex<'f> {
     pub fn new(file: &File) -> TarIndex {
         TarIndex {
-            _file: file,
+            file: file,
             archive: tar::Archive::new(file),
             map: BTreeMap::new(),
             index_map: BTreeMap::new(),
@@ -44,6 +48,26 @@ impl<'f> TarIndex<'f> {
         self.map.get(&key)
     }
 
+    pub fn read(&mut self, node: &Node, offset: u64, size: u64) -> Result<Vec<u8>, io::Error> {
+        let offset_in_file = node.entry.raw_file_offset + (offset as u64);
+        let file_end = node.entry.raw_file_offset + node.entry.filesize;
+        let left = file_end - offset_in_file;
+        trace!("offset {}, size {}, off_f {}, file_end {}, left {}", offset, size, offset_in_file, file_end, left);
+
+        self.file.seek(SeekFrom::Start(offset_in_file))?;
+
+        if left < size {
+            let mut buf = vec![0; left as usize];
+            self.file.read_exact(&mut buf)?;
+            buf.append(&mut vec![0; (size - left) as usize]);
+            Ok(buf)
+        } else {
+            let mut buf = vec![0; size as usize];
+            self.file.read_exact(&mut buf)?;
+            Ok(buf)
+        }
+    }
+
     fn insert(&mut self, new_node: Rc<Node>) {
         let node_id = new_node.id;
         if let Some(parent_id) = new_node.parent_id {
@@ -51,7 +75,7 @@ impl<'f> TarIndex<'f> {
             let filename = match path.file_name() {
                 Some(n) => n,
                 None => {
-                    println!("Unable to get file name from: {}", path.display());
+                    error!("Unable to get file name from: {}", path.display());
                     return
                 }
             };
@@ -207,7 +231,7 @@ impl TarIndexer {
             let mut pe = path_entry.borrow_mut();
             let pe_node = &mut pe.node;
             if pe_node.is_some() {
-                println!("Found double entry for path {}, quitting!", index_entry.path.display());
+                error!("Found double entry for path {}, quitting!", index_entry.path.display());
                 return Ok(index)    // TODO custom error type io::Error | IndexError
             }
 
@@ -295,7 +319,7 @@ impl TarIndexer {
     fn pax_extension(ext: tar::PaxExtension) -> Result<(), Utf8Error> {
         let k = ext.key()?;
         let v = ext.value()?;
-        println!("{}: {}", k, v);
+        info!("{}: {}", k, v);
 
         Ok(())
     }

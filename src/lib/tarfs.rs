@@ -1,4 +1,5 @@
 
+use libc::ENODATA;
 use std::path::{Path};
 use std::ffi::{OsStr};
 use std::{path::PathBuf};
@@ -11,7 +12,7 @@ use time::Timespec;
 use libc::{ENOENT};
 
 use fuse;
-use fuse::{FileAttr, FileType, Filesystem, Request, ReplyAttr, ReplyEntry, ReplyDirectory};
+use fuse::{FileAttr, FileType, Filesystem, Request, ReplyAttr, ReplyEntry, ReplyDirectory, ReplyData};
 
 use tar::EntryType;
 
@@ -21,11 +22,11 @@ use log::{debug, info, error, trace};
 use super::tarindex::{TarIndex};
 
 pub struct TarFs<'f> {
-    index: &'f TarIndex<'f>
+    index: &'f mut TarIndex<'f>
 }
 
 impl<'f> TarFs<'f> {
-    pub fn new(index: &'f TarIndex<'f>) -> TarFs<'f> {
+    pub fn new(index: &'f mut TarIndex<'f>) -> TarFs<'f> {
         TarFs{
             index
         }
@@ -138,28 +139,28 @@ impl<'f> Filesystem for TarFs<'f> {
         reply.ok();
     }
 
-    // fn read(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64, size: u32, mut reply: ReplyData) {
-    //     debug!("read(ino={}, fh={}, offset={}, size={})", ino, fh, offset, size);
+    fn read(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64, size: u32, reply: ReplyData) {
+        debug!("read(ino={}, fh={}, offset={}, size={})", ino, fh, offset, size);
 
-    //     let node = match self.index.get_node_by_id(ino) {
-    //         None => {
-    //             reply.error(ENOENT);
-    //             error!("lookup: no entry");
-    //             return
-    //         },
-    //         Some(n) => n,
-    //     };
+        let node = match self.index.get_node_by_id(ino) {
+            None => {
+                reply.error(ENOENT);
+                error!("lookup: no entry");
+                return
+            },
+            Some(n) => n.clone(),
+        };
 
-    //     reply.da
-    //     // for (key, &inode) in self.inodes.iter() {
-    //     //     if inode == ino {
-    //     //         let value = self.tree.get(key).unwrap();
-    //     //         reply.data(value.to_pretty_str().as_bytes());
-    //     //         return;
-    //     //     }
-    //     // }
-    //     // reply.error(ENOENT);
-    // }
+        let bytes = match self.index.read(&node, offset as u64, size as u64) {
+            Err(e) => {
+                error!("Error reading from file {}: {}", node.entry.path.display(), e);
+                reply.error(ENODATA);
+                return
+            },
+            Ok(bytes) => bytes,
+        };
+        reply.data(&bytes);
+    }
 }
 
 fn emtpy_attr() -> FileAttr {

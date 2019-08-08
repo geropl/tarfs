@@ -26,9 +26,9 @@ pub fn setup_tar_mount(filepath: &Path, mountpoint: &Path) -> Result<(), Box<dyn
     fs::create_dir_all(&mountpoint)?;
 
     let file = File::open(filepath)?;
-    let index = TarIndexer::build_index_for(&file)?;
+    let mut index = TarIndexer::build_index_for(&file)?;
 
-    let tar_fs = TarFs::new(&index);
+    let tar_fs = TarFs::new(&mut index);
     tar_fs.mount(mountpoint)?;
 
     Ok(())
