@@ -10,7 +10,7 @@ use std::cell::{RefCell};
 use std::str::Utf8Error;
 use std::vec::Vec;
 use std::ffi::{OsStr};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH, Instant};
 
 use time::Timespec;
 
@@ -108,7 +108,8 @@ pub struct Node {
     pub id: u64,
     pub entry: TarIndexEntry,
     pub parent_id: Option<u64>,
-    // pub symlink_target: RefCell<Option<Rc<Node>>>,
+    /// TODO Ideally, this would be Vec<Rc<Node>>, but IDK how to achieve this without unsafe (cmp. PathEntry below)
+    ///
     pub children: Ptr<Vec<Rc<Node>>>,
 }
 
@@ -174,6 +175,9 @@ fn ptr<T>(t: T) -> Ptr<T> {
 
 impl TarIndexer {
     pub fn build_index_for(file: &File) -> Result<TarIndex, io::Error> {
+        let now = Instant::now();
+        info!("Starting indexing archive...");
+
         let mut index = TarIndex::new(file);
 
         // Start out with the root node representing the directory we get mounted to
@@ -264,6 +268,7 @@ impl TarIndexer {
             index.insert(node.clone());
         }
 
+        info!("Done indexing archive. Took {}s.", now.elapsed().as_secs());
         Ok(index)
     }
 
