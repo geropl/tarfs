@@ -6,7 +6,7 @@ edition = "2018"
 
 [lib]
 name = "tarfslib"
-path = "src/lib/mod.rs"
+path = "src/lib.rs"
 
 [[bin]]
 name = "tarfs"

@@ -1,6 +1,7 @@
 extern crate env_logger;
 
-mod lib;
+extern crate tarfslib;
+use tarfslib as lib;
 
 use std::env;
 use std::path::Path;

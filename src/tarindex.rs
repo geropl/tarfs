@@ -171,7 +171,7 @@ pub struct TarIndexEntry {
 
 pub struct TarIndexer {}
 
-/// This is a placeholder struct used by the TarIndexer to be able to create entries for not yet read tar entries
+/// This is a placeholder struct used by the TarIndexer to be able to create entries for not-yet-read tar entries
 /// (in case children are read before their parents, for example)
 #[derive(Debug)]
 struct PathEntry {

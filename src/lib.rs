@@ -10,8 +10,8 @@ extern crate tar;
 extern crate log;
 extern crate env_logger;
 
-mod tarindex;
-mod tarfs;
+pub mod tarindex;
+pub mod tarfs;
 
 use std::{fs, fs::File};
 use std::path::Path;
