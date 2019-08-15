@@ -108,6 +108,7 @@ pub struct Node {
     pub id: u64,
     pub entry: TarIndexEntry,
     pub parent_id: Option<u64>,
+    // pub symlink_target: RefCell<Option<Rc<Node>>>,
     pub children: Ptr<Vec<Rc<Node>>>,
 }
 
@@ -118,9 +119,13 @@ impl Node {
 
     pub fn attrs(&self) -> fuse::FileAttr {
         let mtime = Timespec::new(self.entry.mtime as i64, 0);
+        let size = match &self.entry.link_name {
+            None => self.entry.filesize,
+            Some(ln) => ln.as_os_str().len() as u64,
+        };
         fuse::FileAttr {
             ino: self.ino(),
-            size: self.entry.filesize,
+            size,
             blocks: 0,
             atime: mtime,
             mtime: mtime,
@@ -155,6 +160,7 @@ pub struct TarIndexEntry {
 
 pub struct TarIndexer {}
 
+#[derive(Debug)]
 struct PathEntry {
     pub id: u64,
     pub children: Ptr<Vec<Rc<Node>>>,
@@ -248,13 +254,13 @@ impl TarIndexer {
             pe_node.replace(rc_node.clone());
 
             // Add itself to parents children
-            parents_children.borrow_mut().push(rc_node);
+            parents_children.borrow_mut().push(rc_node.clone());
         }
 
         // Actually insert entries into index
-        for (_path, path_entry) in path_map {
+        for (_, path_entry) in path_map {
             let pe = path_entry.borrow();
-            let node = pe.node.as_ref().expect("Found PathEntry without Node!");
+            let node = pe.node.as_ref().expect(&format!("Found PathEntry without Node: {:?}", pe));
             index.insert(node.clone());
         }
 

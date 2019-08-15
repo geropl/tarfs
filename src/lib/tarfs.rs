@@ -161,6 +161,32 @@ impl<'f> Filesystem for TarFs<'f> {
         };
         reply.data(&bytes);
     }
+
+    fn readlink(&mut self, _req: &Request, ino: u64, reply: ReplyData) {
+        debug!("readlink(ino={})", ino);
+
+        let node = match self.index.get_node_by_id(ino) {
+            None => {
+                reply.error(ENOENT);
+                error!("readlink: no entry");
+                return
+            },
+            Some(n) => n.clone(),
+        };
+
+        match &node.entry.link_name {
+            Some(path) => {
+                use std::os::unix::ffi::OsStrExt;
+
+                let bytes = path.as_os_str().as_bytes();
+                reply.data(bytes);
+            },
+            None => {
+                error!("readlink: no link_name");
+                return
+            }
+        }
+    }
 }
 
 fn emtpy_attr() -> FileAttr {
