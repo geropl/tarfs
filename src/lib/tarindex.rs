@@ -19,14 +19,23 @@ use log::{trace, info, error};
 
 use fuse;
 
-type PathMap = BTreeMap<PathBuf, Rc<Node>>;
-type IndexMap = BTreeMap<u64, Rc<Node>>;
+type ChildMap = BTreeMap<PathBuf, Rc<INode>>;
+type INodeMap = BTreeMap<u64, Rc<INode>>;
 
+/// This is the resulting index struct.
+/// It holds a reference to the given archive file as it needs it to be open all time as it uses it not only to build the index but only to resolve content later.
 pub struct TarIndex<'f> {
+    /// The archive file. Used to create the tar::Archive and later used to read content.
     file: &'f File,
+
+    /// The parsed tar::Archive. Iterated once to build up the index.
     archive: tar::Archive<&'f File>,
-    map: PathMap,
-    index_map: IndexMap,
+
+    /// Maps <ino>/<file_name> to the INode
+    child_map: ChildMap,
+
+    /// Maps ino to the INode
+    inode_map: INodeMap,
 }
 
 impl<'f> TarIndex<'f> {
@@ -34,21 +43,21 @@ impl<'f> TarIndex<'f> {
         TarIndex {
             file: file,
             archive: tar::Archive::new(file),
-            map: BTreeMap::new(),
-            index_map: BTreeMap::new(),
+            child_map: BTreeMap::new(),
+            inode_map: BTreeMap::new(),
         }
     }
 
-    pub fn get_node_by_id(&self, id: u64) -> Option<&Rc<Node>> {
-        self.index_map.get(&id)
+    pub fn get_node_by_ino(&self, ino: u64) -> Option<&Rc<INode>> {
+        self.inode_map.get(&ino)
     }
 
-    pub fn lookup_child(&self, parent: u64, path: PathBuf) -> Option<&Rc<Node>> {
-        let key = self.lookup_key(parent, path.as_os_str());
-        self.map.get(&key)
+    pub fn lookup_child(&self, parent_ino: u64, path: PathBuf) -> Option<&Rc<INode>> {
+        let key = self.lookup_key(parent_ino, path.as_os_str());
+        self.child_map.get(&key)
     }
 
-    pub fn read(&mut self, node: &Node, offset: u64, size: u64) -> Result<Vec<u8>, io::Error> {
+    pub fn read(&mut self, node: &INode, offset: u64, size: u64) -> Result<Vec<u8>, io::Error> {
         let offset_in_file = node.entry.raw_file_offset + (offset as u64);
         let file_end = node.entry.raw_file_offset + node.entry.filesize;
         let left = file_end - offset_in_file;
@@ -68,8 +77,8 @@ impl<'f> TarIndex<'f> {
         }
     }
 
-    fn insert(&mut self, new_node: Rc<Node>) {
-        let node_id = new_node.id;
+    fn insert(&mut self, new_node: Rc<INode>) {
+        let ino = new_node.ino;
         if let Some(parent_id) = new_node.parent_id {
             let path = new_node.entry.path.as_path();
             let filename = match path.file_name() {
@@ -80,9 +89,9 @@ impl<'f> TarIndex<'f> {
                 }
             };
             let key = self.lookup_key(parent_id, filename);
-            self.map.insert(key, new_node.clone());
+            self.child_map.insert(key, new_node.clone());
         }
-        self.index_map.insert(node_id, new_node);
+        self.inode_map.insert(ino, new_node);
     }
 
     fn lookup_key(&self, id: u64, filename: &OsStr) -> PathBuf {
@@ -96,7 +105,7 @@ impl<'f> TarIndex<'f> {
 impl fmt::Display for TarIndex<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut content = String::new();
-        for (_, node) in self.map.iter() {
+        for (_, node) in self.inode_map.iter() {
             content.push_str(&format!("{:?}", node));
         }
         write!(f, "Index: \n{{{}\n}}", content)
@@ -104,35 +113,36 @@ impl fmt::Display for TarIndex<'_> {
 }
 
 #[derive(Debug)]
-pub struct Node {
-    pub id: u64,
+pub struct INode {
+    pub ino: u64,
     pub entry: TarIndexEntry,
     pub parent_id: Option<u64>,
-    /// TODO Ideally, this would be Vec<Rc<Node>>, but IDK how to achieve this without unsafe (cmp. PathEntry below)
+    /// TODO Ideally, this would be Vec<Rc<INode>>, but IDK how to achieve this without unsafe (cmp. PathEntry below)
     ///
-    pub children: Ptr<Vec<Rc<Node>>>,
+    pub children: Ptr<Vec<Rc<INode>>>,
 }
 
-impl Node {
-    pub fn ino(&self) -> u64 {
-        self.id
-    }
-
+impl INode {
     pub fn attrs(&self) -> fuse::FileAttr {
+        let kind = tar_entrytype_to_filetype(self.entry.ftype);
         let mtime = Timespec::new(self.entry.mtime as i64, 0);
         let size = match &self.entry.link_name {
-            None => self.entry.filesize,
+            // For symlinks, fuse wants the length of the OsStr...
             Some(ln) => ln.as_os_str().len() as u64,
+            None => match kind {
+                fuse::FileType::Directory => 4096,    // We're mimicking ext4 here
+                _ => self.entry.filesize,       // The default case: Size "on disk" is the same as the size in the tar (uncompressed) archive
+            },
         };
         fuse::FileAttr {
-            ino: self.ino(),
+            ino: self.ino,
             size,
             blocks: 0,
             atime: mtime,
             mtime: mtime,
             ctime: mtime,
             crtime: mtime, // macOS only
-            kind: tar_entrytype_to_filetype(self.entry.ftype),
+            kind,
             perm: self.entry.mode as u16,
             nlink: 1,
             uid: self.entry.uid as u32,
@@ -161,13 +171,18 @@ pub struct TarIndexEntry {
 
 pub struct TarIndexer {}
 
+/// This is a placeholder struct used by the TarIndexer to be able to create entries for not yet read tar entries
+/// (in case children are read before their parents, for example)
 #[derive(Debug)]
 struct PathEntry {
     pub id: u64,
-    pub children: Ptr<Vec<Rc<Node>>>,
-    pub node: Option<Rc<Node>>,
+    pub children: Ptr<Vec<Rc<INode>>>,
+    pub node: Option<Rc<INode>>,
 }
 
+type PathMap = BTreeMap<PathBuf, Ptr<PathEntry>>;
+
+/// Shorthand type
 type Ptr<T> = Rc<RefCell<T>>;
 fn ptr<T>(t: T) -> Ptr<T> {
     Rc::new(RefCell::new(t))
@@ -188,11 +203,11 @@ impl TarIndexer {
             res
         };
 
-        let mut path_map: BTreeMap<PathBuf, Ptr<PathEntry>> = BTreeMap::new();
+        let mut path_map: PathMap = BTreeMap::new();
         let root_node = TarIndexer::create_root_node(get(&mut inode_id));
         let root_path = root_node.entry.path.to_owned();
         let root_pe = PathEntry {
-            id: root_node.id,
+            id: root_node.ino,
             children: root_node.children.clone(),
             node: Some(Rc::new(root_node)),
         };
@@ -203,40 +218,16 @@ impl TarIndexer {
 
             // Find parent!
             let parent_path = index_entry.path.parent().expect("a tar entry without parent component!");
-            let (parent_id, parents_children) = match path_map.get(parent_path) {
-                None => {
-                    let id = get(&mut inode_id);
-                    let children = ptr(vec!());
-                    let pe = ptr(PathEntry {
-                        id,
-                        children: children.clone(),
-                        node: None,
-                    });
-                    path_map.insert(parent_path.to_owned(), pe);
-                    (id, children)
-                },
-                Some(pe) => {
-                    let id = pe.borrow().id;
-                    (id, pe.borrow_mut().children.clone())
-                }
-            };
+            let parent_pe = TarIndexer::get_or_create_path_entry(&mut path_map, parent_path, || {
+                get(&mut inode_id)
+            });
 
             // Entry already present?
-            let path_entry = match path_map.get(&index_entry.path) {
-                None => {
-                    let id = get(&mut inode_id);
-                    let pe = ptr(PathEntry {
-                        id,
-                        children: ptr(vec!()),
-                        node: None,
-                    });
-                    path_map.insert(index_entry.path.to_owned(), pe.clone());
-                    (pe)
-                },
-                Some(pe) => pe.clone(),
-            };
+            let path_entry = TarIndexer::get_or_create_path_entry(&mut path_map, &index_entry.path, || {
+                get(&mut inode_id)
+            });
 
-            let node_id = path_entry.borrow().id;
+            let ino = path_entry.borrow().id;
             let children = path_entry.borrow().children.clone();
             let mut pe = path_entry.borrow_mut();
             let pe_node = &mut pe.node;
@@ -246,10 +237,10 @@ impl TarIndexer {
             }
 
             // Create node
-            let node = Node {
-                id: node_id,
+            let node = INode {
+                ino,
                 entry: index_entry,
-                parent_id: Some(parent_id),
+                parent_id: Some(parent_pe.borrow().id),
                 children,
             };
             let rc_node = Rc::new(node);
@@ -258,13 +249,13 @@ impl TarIndexer {
             pe_node.replace(rc_node.clone());
 
             // Add itself to parents children
-            parents_children.borrow_mut().push(rc_node.clone());
+            parent_pe.borrow_mut().children.borrow_mut().push(rc_node.clone());
         }
 
         // Actually insert entries into index
         for (_, path_entry) in path_map {
             let pe = path_entry.borrow();
-            let node = pe.node.as_ref().expect(&format!("Found PathEntry without Node: {:?}", pe));
+            let node = pe.node.as_ref().expect(&format!("Found PathEntry without INode: {:?}", pe));
             index.insert(node.clone());
         }
 
@@ -272,11 +263,28 @@ impl TarIndexer {
         Ok(index)
     }
 
-    fn create_root_node(inode_id: u64) -> Node {
+    fn get_or_create_path_entry<F>(path_map: &mut PathMap, path: &Path, mut get_ino: F) -> Ptr<PathEntry>
+        where
+            F: FnMut() -> u64 {
+        match path_map.get(path) {
+            None => {
+                let pe = ptr(PathEntry {
+                    id: get_ino(),
+                    children: ptr(vec!()),
+                    node: None,
+                });
+                path_map.insert(path.to_owned(), pe.clone());
+                (pe)
+            },
+            Some(pe) => pe.clone(),
+        }
+    }
+
+    fn create_root_node(ino: u64) -> INode {
         let start = SystemTime::now();
         let since_epoch = start.duration_since(UNIX_EPOCH).expect("SystemTime error");
-        Node {
-            id: inode_id,
+        INode {
+            ino,
             entry: TarIndexEntry {
                 index: 0,
                 header_offset: 0,

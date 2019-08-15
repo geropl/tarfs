@@ -65,7 +65,7 @@ impl<'f> Filesystem for TarFs<'f> {
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         debug!("getattr(ino={})", ino);
 
-        let node = match self.index.get_node_by_id(ino) {
+        let node = match self.index.get_node_by_ino(ino) {
             None => {
                 reply.error(ENOENT);
                 error!("lookup: no entry");
@@ -80,7 +80,7 @@ impl<'f> Filesystem for TarFs<'f> {
     fn readdir(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64, mut reply: ReplyDirectory) {
         debug!("readdir(ino={}, fh={}, offset={})", ino, fh, offset);
 
-        let node = match self.index.get_node_by_id(ino) {
+        let node = match self.index.get_node_by_ino(ino) {
             None => {
                 reply.error(ENOENT);
                 error!("readdir: no entry");
@@ -98,7 +98,7 @@ impl<'f> Filesystem for TarFs<'f> {
         if offset == 0 {
             let off = 1;
             let kind = FileType::Directory;
-            full = reply.add(node.ino(), off, kind, ".");
+            full = reply.add(node.ino, off, kind, ".");
             trace!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, ".");
             if full {
                 reply.ok();
@@ -109,7 +109,7 @@ impl<'f> Filesystem for TarFs<'f> {
         if offset <= 1 {
             // Handle fs root: same ino as
             let ino = match node.parent_id {
-                None => node.ino(),
+                None => node.ino,
                 Some(ino) => ino,
             };
 
@@ -126,7 +126,7 @@ impl<'f> Filesystem for TarFs<'f> {
         let children_offset = (offset - 2).max(0);
         let mut off: i64 = 2 + children_offset + 1;
         for child in &node.children.borrow()[children_offset as usize..] {
-            let ino = child.ino();
+            let ino = child.ino;
             let kind = child.attrs().kind;
             let name = &child.entry.name;
             trace!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, name.display());
@@ -142,7 +142,7 @@ impl<'f> Filesystem for TarFs<'f> {
     fn read(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64, size: u32, reply: ReplyData) {
         debug!("read(ino={}, fh={}, offset={}, size={})", ino, fh, offset, size);
 
-        let node = match self.index.get_node_by_id(ino) {
+        let node = match self.index.get_node_by_ino(ino) {
             None => {
                 reply.error(ENOENT);
                 error!("lookup: no entry");
@@ -165,7 +165,7 @@ impl<'f> Filesystem for TarFs<'f> {
     fn readlink(&mut self, _req: &Request, ino: u64, reply: ReplyData) {
         debug!("readlink(ino={})", ino);
 
-        let node = match self.index.get_node_by_id(ino) {
+        let node = match self.index.get_node_by_ino(ino) {
             None => {
                 reply.error(ENOENT);
                 error!("readlink: no entry");
