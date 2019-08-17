@@ -1,4 +1,3 @@
-
 use libc::ENODATA;
 use std::path::{Path};
 use std::ffi::{OsStr};
@@ -21,6 +20,19 @@ use log::{debug, info, error, trace};
 
 use super::tarindex::{TarIndex};
 
+const NAME_OPTIONS: &[&str] = &[
+    "fsname=tarfs",
+    "subtype=tarfs",
+];
+
+const DEFAULT_OPTIONS: &[&str] = &[
+    // http://manpages.ubuntu.com/manpages/bionic/en/man8/mount.fuse.8.html#options
+    "default_permissions",  // Enable default kernel permission handling
+    "allow_other",          // Allow other users to access the files
+    "kernel_cache",         // Disable flushing the kernel cache on each "open"
+    "use_ino",              // IDK what it could mean to have this disabled...
+];
+
 pub struct TarFs<'f> {
     index: &'f mut TarIndex<'f>
 }
@@ -33,13 +45,29 @@ impl<'f> TarFs<'f> {
     }
 
     pub fn mount(self, mountpoint: &Path) -> io::Result<()> {
+        let oss = &mut Vec::new();
+        oss.extend(NAME_OPTIONS);
+        oss.extend(DEFAULT_OPTIONS);
+        let options = fuse_optionize(oss);
+
+        info!("tarfs mounted.");
         // TODO Would be cool to use fuse::spawn_mount here..
         // But moving TarFs across thread boundaries seems impossible
-        info!("tarfs mounted.");
-        let res = fuse::mount(self, &mountpoint, &[]);
+        let res = fuse::mount(self, &mountpoint, &options);
         info!("tarfs unmounted.");
         res
     }
+}
+
+fn fuse_optionize<'a>(os: &Vec<&'a str>) -> Vec<&'a OsStr> {
+    let mut result: Vec<&OsStr> = vec!();
+    let opts = os.iter()
+            .map(|o| o.to_owned().as_ref())
+            .collect::<Vec<&OsStr>>();
+    for i in (opts.len() - 1)..0 {
+        result.insert(i, "-o".as_ref());
+    }
+    result
 }
 
 impl<'f> Filesystem for TarFs<'f> {
