@@ -5,6 +5,7 @@ use std::{path::PathBuf};
 use std::io;
 #[allow(unused_imports)]
 use std::cell::RefCell;
+use std::sync::mpsc;
 
 use time::Timespec;
 
@@ -34,13 +35,15 @@ const DEFAULT_OPTIONS: &[&str] = &[
 ];
 
 pub struct TarFs<'f> {
-    index: &'f mut TarIndex<'f>
+    index: &'f mut TarIndex<'f>,
+    pub start_signal: mpsc::SyncSender<()>,
 }
 
 impl<'f> TarFs<'f> {
-    pub fn new(index: &'f mut TarIndex<'f>) -> TarFs<'f> {
+    pub fn new(index: &'f mut TarIndex<'f>, start_signal: mpsc::SyncSender<()>) -> TarFs<'f> {
         TarFs{
-            index
+            index,
+            start_signal,
         }
     }
 
@@ -71,6 +74,14 @@ fn fuse_optionize<'a>(os: &Vec<&'a str>) -> Vec<&'a OsStr> {
 }
 
 impl<'f> Filesystem for TarFs<'f> {
+    fn init(&mut self, _req: &Request) -> Result<(), i32> {
+        // Signal start
+        if let Err(_) = self.start_signal.send(()) {
+            // Do nothing
+        }
+        Ok(())
+    }
+
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let path = PathBuf::from(name);
         debug!("lookup(parent={}, name={})", parent, path.to_str().unwrap());

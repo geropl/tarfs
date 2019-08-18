@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<std::error::Error>>  {
         _ => Err(format!("Usage: {} <FILENAME> <MOUNTPOINT>", args.as_slice()[0]))
     }?;
 
-    lib::setup_tar_mount(filename, mountpoint)?;
+    lib::setup_tar_mount(filename, mountpoint, None)?;
 
     Ok(())
 }

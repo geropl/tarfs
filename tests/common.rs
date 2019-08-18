@@ -4,6 +4,7 @@ use std::process::Command;
 use std::str;
 use std::fs;
 use std::thread;
+use std::sync::mpsc::sync_channel;
 
 type TarFsTestResult = Result<(), Box<std::error::Error>>;
 
@@ -32,12 +33,17 @@ impl TarFsTest {
         let filename = PathBuf::from(self.filename.to_str().unwrap());
         let mountpoint = PathBuf::from(self.mountpoint.to_str().unwrap());
 
+        let (tx, rx) = sync_channel(1);
         thread::spawn(move || {
-            match tarfslib::setup_tar_mount(&filename, &mountpoint) {
+            match tarfslib::setup_tar_mount(&filename, &mountpoint, Some(tx)) {
                 Ok(_) => (),
                 Err(e) => println!("setup_tar_mount error: {}", e)
             }
         });
+        let r = rx.recv();
+        if let Err(e) = r {
+            eprintln!("error: {}", e);
+        }
 
         Ok(())
     }
