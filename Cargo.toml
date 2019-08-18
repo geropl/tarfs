@@ -22,3 +22,4 @@ env_logger = "0.6.2"
 
 [dev-dependencies]
 pretty_assertions = "0.6.1"
+walkdir = "2"
