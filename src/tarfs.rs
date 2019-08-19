@@ -19,7 +19,7 @@ use tar::EntryType;
 use log;
 use log::{debug, info, error, trace};
 
-use super::tarindex::{TarIndex};
+use super::tarindex::{TarIndex, INode};
 
 const NAME_OPTIONS: &[&str] = &[
     "fsname=tarfs",
@@ -98,7 +98,7 @@ impl<'f> Filesystem for TarFs<'f> {
                 return;
             },
         };
-        reply.entry(&ttl_max(), &node.attrs(), 0);
+        reply.entry(&ttl_max(), &attrs(&node), 0);
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
@@ -113,7 +113,7 @@ impl<'f> Filesystem for TarFs<'f> {
             Some(n) => n,
         };
 
-        reply.attr(&ttl_max(), &node.attrs());
+        reply.attr(&ttl_max(), &attrs(&node));
     }
 
     fn readdir(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64, mut reply: ReplyDirectory) {
@@ -166,7 +166,7 @@ impl<'f> Filesystem for TarFs<'f> {
         let mut off: i64 = 2 + children_offset + 1;
         for child in &node.children.borrow()[children_offset as usize..] {
             let ino = child.ino;
-            let kind = child.attrs().kind;
+            let kind = attrs(child).kind;
             let name = &child.entry.name;
             trace!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, name.display());
             full = reply.add(ino, off, kind, name);
@@ -225,6 +225,49 @@ impl<'f> Filesystem for TarFs<'f> {
                 return
             }
         }
+    }
+}
+
+
+fn attrs(node: &INode) -> fuse::FileAttr {
+    let kind = tar_entrytype_to_filetype(node.entry.ftype);
+    let mtime = Timespec::new(node.entry.mtime as i64, 0);
+    let size = match &node.entry.link_name {
+        // For symlinks, fuse wants the length of the OsStr...
+        Some(ln) => ln.as_os_str().len() as u64,
+        None => match kind {
+            fuse::FileType::Directory => 4096,    // We're mimicking ext4 here
+            _ => node.entry.filesize,       // The default case: Size "on disk" is the same as the size in the tar (uncompressed) archive
+        },
+    };
+    fuse::FileAttr {
+        ino: node.ino,
+        size,
+        blocks: 0,
+        atime: mtime,
+        mtime: mtime,
+        ctime: mtime,
+        crtime: mtime, // macOS only
+        kind,
+        perm: node.entry.mode as u16,
+        nlink: 1,
+        uid: node.entry.uid as u32,
+        gid: node.entry.gid as u32,
+        rdev: 0,
+        flags: 0,
+    }
+}
+
+fn tar_entrytype_to_filetype(ftype: tar::EntryType) -> fuse::FileType {
+    match ftype {
+        EntryType::Regular => FileType::RegularFile,
+        EntryType::Directory => FileType::Directory,
+        EntryType::Symlink => FileType::Symlink,
+        t => {
+            println!("Unsupported EntryType: {:?}", t);
+            FileType::RegularFile
+        },
+        // EntryType::Link => FileType::
     }
 }
 

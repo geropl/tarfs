@@ -10,12 +10,33 @@ use std::cell::{RefCell};
 use std::vec::Vec;
 use std::ffi::{OsStr};
 
-use time::Timespec;
-
-use log;
 use log::{trace, error};
 
-use fuse;
+#[derive(Debug)]
+pub struct INode {
+    pub ino: u64,
+    pub entry: TarIndexEntry,
+    pub parent_id: Option<u64>,
+    /// TODO Ideally, this would be Vec<Rc<INode>>, but IDK how to achieve this without unsafe (cmp. PathEntry below)
+    ///
+    pub children: Rc<RefCell<Vec<Rc<INode>>>>,
+}
+
+#[derive(Debug)]
+pub struct TarIndexEntry {
+    pub index: u64,
+    pub header_offset: u64,
+    pub raw_file_offset: u64,
+    pub name: PathBuf,
+    pub path: PathBuf,
+    pub link_name: option::Option<PathBuf>,
+    pub filesize: u64,
+    pub mode: u32,
+    pub uid: u64,
+    pub gid: u64,
+    pub mtime: u64,
+    pub ftype: tar::EntryType,
+}
 
 type ChildMap = BTreeMap<PathBuf, Rc<INode>>;
 type INodeMap = BTreeMap<u64, Rc<INode>>;
@@ -103,78 +124,5 @@ impl fmt::Display for TarIndex<'_> {
             content.push_str(&format!("{:?}", node));
         }
         write!(f, "Index: \n{{{}\n}}", content)
-    }
-}
-
-#[derive(Debug)]
-pub struct INode {
-    pub ino: u64,
-    pub entry: TarIndexEntry,
-    pub parent_id: Option<u64>,
-    /// TODO Ideally, this would be Vec<Rc<INode>>, but IDK how to achieve this without unsafe (cmp. PathEntry below)
-    ///
-    pub children: Rc<RefCell<Vec<Rc<INode>>>>,
-}
-
-impl INode {
-    pub fn attrs(&self) -> fuse::FileAttr {
-        let kind = tar_entrytype_to_filetype(self.entry.ftype);
-        let mtime = Timespec::new(self.entry.mtime as i64, 0);
-        let size = match &self.entry.link_name {
-            // For symlinks, fuse wants the length of the OsStr...
-            Some(ln) => ln.as_os_str().len() as u64,
-            None => match kind {
-                fuse::FileType::Directory => 4096,    // We're mimicking ext4 here
-                _ => self.entry.filesize,       // The default case: Size "on disk" is the same as the size in the tar (uncompressed) archive
-            },
-        };
-        fuse::FileAttr {
-            ino: self.ino,
-            size,
-            blocks: 0,
-            atime: mtime,
-            mtime: mtime,
-            ctime: mtime,
-            crtime: mtime, // macOS only
-            kind,
-            perm: self.entry.mode as u16,
-            nlink: 1,
-            uid: self.entry.uid as u32,
-            gid: self.entry.gid as u32,
-            rdev: 0,
-            flags: 0,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct TarIndexEntry {
-    pub index: u64,
-    pub header_offset: u64,
-    pub raw_file_offset: u64,
-    pub name: PathBuf,
-    pub path: PathBuf,
-    pub link_name: option::Option<PathBuf>,
-    pub filesize: u64,
-    pub mode: u32,
-    pub uid: u64,
-    pub gid: u64,
-    pub mtime: u64,
-    pub ftype: tar::EntryType,
-}
-
-fn tar_entrytype_to_filetype(ftype: tar::EntryType) -> fuse::FileType {
-    use fuse::FileType;
-    use tar::EntryType;
-
-    match ftype {
-        EntryType::Regular => FileType::RegularFile,
-        EntryType::Directory => FileType::Directory,
-        EntryType::Symlink => FileType::Symlink,
-        t => {
-            println!("Unsupported EntryType: {:?}", t);
-            FileType::RegularFile
-        },
-        // EntryType::Link => FileType::
     }
 }

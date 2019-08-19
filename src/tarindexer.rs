@@ -137,11 +137,13 @@ impl TarIndexer {
                 name: PathBuf::from("."),
                 path: PathBuf::from("./"),
                 link_name: None,
+                // TODO make configurable
                 filesize: 0,
                 mode: 0o777,
                 uid: 33333,
                 gid: 33333,
-                mtime: since_epoch.as_secs(),
+                // TODO make configurable
+                mtime: since_epoch.as_secs(),   // TODO fix timestamp
                 ftype: tar::EntryType::Directory,
             },
             parent_id: None,
