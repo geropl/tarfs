@@ -10,14 +10,15 @@ extern crate tar;
 extern crate log;
 extern crate env_logger;
 
-pub mod tarindex;
-pub mod tarfs;
+mod tarindex;
+mod tarindexer;
+mod tarfs;
 
 use std::{fs, fs::File};
 use std::path::Path;
 use std::sync::mpsc;
 
-use tarindex::TarIndexer;
+use tarindexer::TarIndexer;
 use tarfs::TarFs;
 
 pub fn setup_tar_mount(filepath: &Path, mountpoint: &Path, start_signal: Option<mpsc::SyncSender<()>>) -> Result<(), Box<dyn std::error::Error>> {
