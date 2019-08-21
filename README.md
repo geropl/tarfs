@@ -41,8 +41,8 @@ TODO
 
  [![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/geropl/tarfs)
 
-### TODOS
- - [] hard links
- - [] optimize reads by using a buffered reader
- - [] try to create static binary by replacing relevant parts in https://github.com/zargony/rust-fuse
- - ...
+### ToDo
+ - [ ] hard links
+ - [ ] optimize reads by using a buffered reader
+ - [ ] try to create static binary by replacing relevant parts in https://github.com/zargony/rust-fuse
+ - [ ] ...
