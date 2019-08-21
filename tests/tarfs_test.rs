@@ -71,7 +71,7 @@ fn tarfs_recursive_compare() -> Result<(), Box<std::error::Error>> {
                     } else {
                         assert_eq!(exp_meta.len(), act_meta.len());
                     }
-                    // assert_eq!(exp_meta.permissions(), act_meta.permissions());
+                    assert_eq!(exp_meta.permissions(), act_meta.permissions());
                 },
                 (None, None) => break,  // Done
             };

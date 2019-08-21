@@ -33,6 +33,12 @@ impl TarFsTest {
         let filename = PathBuf::from(self.filename.to_str().unwrap());
         let mountpoint = PathBuf::from(self.mountpoint.to_str().unwrap());
 
+        // Make sure we aren't comparing apples with oranges
+        if mountpoint.exists() {
+            fs::remove_dir(&mountpoint)?;
+        }
+        fs::create_dir_all(&mountpoint)?;
+
         let (tx, rx) = sync_channel(1);
         thread::spawn(move || {
             match tarfslib::setup_tar_mount(&filename, &mountpoint, Some(tx)) {

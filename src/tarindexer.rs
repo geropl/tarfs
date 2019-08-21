@@ -30,10 +30,20 @@ fn ptr<T>(t: T) -> Ptr<T> {
 
 type PathMap = BTreeMap<PathBuf, Ptr<PathEntry>>;
 
+pub struct Options {
+    pub root_permissions: Permissions,
+}
+
+pub struct Permissions {
+    pub mode: u32,
+    pub uid: u64,
+    pub gid: u64,
+}
+
 pub struct TarIndexer {}
 
 impl TarIndexer {
-    pub fn build_index_for(file: &File) -> Result<TarIndex, io::Error> {
+    pub fn build_index_for<'f>(file: &'f File, options: &Options) -> Result<TarIndex<'f>, io::Error> {
         let now = Instant::now();
         info!("Starting indexing archive...");
 
@@ -49,7 +59,7 @@ impl TarIndexer {
         };
 
         let mut path_map: PathMap = BTreeMap::new();
-        let root_node = TarIndexer::create_root_node(get(&mut inode_id));
+        let root_node = TarIndexer::create_root_node(get(&mut inode_id), &options.root_permissions);
         let root_path = root_node.entry.path.to_owned();
         let root_pe = PathEntry {
             id: root_node.ino,
@@ -125,7 +135,7 @@ impl TarIndexer {
         }
     }
 
-    fn create_root_node(ino: u64) -> INode {
+    fn create_root_node(ino: u64, root_permissions: &Permissions) -> INode {
         let start = SystemTime::now();
         let since_epoch = start.duration_since(UNIX_EPOCH).expect("SystemTime error");
         INode {
@@ -137,13 +147,11 @@ impl TarIndexer {
                 name: PathBuf::from("."),
                 path: PathBuf::from("./"),
                 link_name: None,
-                // TODO make configurable
                 filesize: 0,
-                mode: 0o777,
-                uid: 33333,
-                gid: 33333,
-                // TODO make configurable
-                mtime: since_epoch.as_secs(),   // TODO fix timestamp
+                mode: root_permissions.mode,
+                uid: root_permissions.uid,
+                gid: root_permissions.gid,
+                mtime: since_epoch.as_secs(),
                 ftype: tar::EntryType::Directory,
             },
             parent_id: None,
