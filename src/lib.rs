@@ -9,24 +9,32 @@ extern crate tar;
 // both
 extern crate log;
 extern crate env_logger;
+#[macro_use]
+extern crate failure;
 
 mod tarindex;
 mod tarindexer;
 mod tarfs;
 
+use failure::Error;
+
 use std::{fs, fs::File};
 use std::path::Path;
 use std::sync::mpsc;
-use std::fmt;
-use std::error::Error;
 
 use tarindexer::{TarIndexer, Options, Permissions};
 use tarfs::TarFs;
 
-pub fn setup_tar_mount(filepath: &Path, mountpoint: &Path, start_signal: Option<mpsc::SyncSender<()>>) -> Result<(), Box<dyn std::error::Error>> {
-    if !mountpoint.exists() || !mountpoint.is_dir() {
-        return Err(Box::new(MountError::new("mountpoint is not a directory")));
-    }
+#[derive(Debug, Fail)]
+pub enum TarFsError {
+    #[fail(display = "{}", text)]
+    MountError {
+        text: String,
+    },
+}
+
+pub fn setup_tar_mount(filepath: &Path, mountpoint: &Path, start_signal: Option<mpsc::SyncSender<()>>) -> Result<(), Error> {
+    ensure_mountpoint_dir_exists(mountpoint)?;
 
     // Make the fs root dir permissions the ones from the mountpoint
     let mountpoint_meta = mountpoint.metadata()?;
@@ -49,6 +57,13 @@ pub fn setup_tar_mount(filepath: &Path, mountpoint: &Path, start_signal: Option<
     Ok(())
 }
 
+fn ensure_mountpoint_dir_exists(mountpoint: &Path) -> Result<(), TarFsError> {
+    if !mountpoint.exists() || !mountpoint.is_dir() {
+        return Err(TarFsError::MountError{ text: String::from("mountpoint is not a directory")}.into());
+    }
+    Ok(())
+}
+
 fn permissions_from_mountpoint(meta: &fs::Metadata) -> Permissions {
     use std::os::unix::fs::PermissionsExt;
     use std::os::linux::fs::MetadataExt;
@@ -57,31 +72,5 @@ fn permissions_from_mountpoint(meta: &fs::Metadata) -> Permissions {
         mode: p.mode(),
         uid: meta.st_uid() as u64,
         gid: meta.st_gid() as u64,
-    }
-}
-
-#[derive(Debug, Clone)]
-struct MountError {
-    text: &'static str,
-}
-
-impl MountError {
-    fn new(text: &'static str) -> MountError {
-        MountError {
-            text
-        }
-    }
-}
-
-impl fmt::Display for MountError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.text)
-    }
-}
-
-impl Error for MountError {
-    fn source(&self) -> Option<&(dyn Error + 'static)> {
-        // Generic error, underlying cause isn't tracked.
-        None
     }
 }
