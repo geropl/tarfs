@@ -5,6 +5,7 @@ extern crate tarfslib;
 use std::process::Command;
 use std::str;
 use std::fs;
+use std::path::PathBuf;
 
 #[cfg(test)]
 use pretty_assertions::{assert_eq};
@@ -48,23 +49,36 @@ fn tarfs_recursive_compare() -> Result<(), Box<std::error::Error>> {
             e1.path().partial_cmp(e2.path()).unwrap_or(std::cmp::Ordering::Greater)
         };
 
+        // Sort paths, start with root's children
         let mountpoint_str = mountpoint.to_str().unwrap();
-        let mut expected_it = WalkDir::new("tests/ar.dir").sort_by(path_cmp).into_iter();
-        let mut actual_it = WalkDir::new(mountpoint_str).sort_by(path_cmp).into_iter();
+        let mut expected_it = WalkDir::new("tests/ar.dir").sort_by(path_cmp).min_depth(1).into_iter();
+        let mut actual_it = WalkDir::new(mountpoint_str).sort_by(path_cmp).min_depth(1).into_iter();
 
         loop {
             match (expected_it.next(), actual_it.next()) {
                 (None, Some(actual)) => panic!("Found more entries than expected: {}", actual?.path().display()),
                 (Some(expected), None) => panic!("Expected more entries: {}", expected?.path().display()),
                 (Some(expected), Some(actual)) => {
+                    let act_dir_entry = actual?;
+                    let is_root_dir = act_dir_entry.path().to_str().unwrap() == mountpoint_str;
+                    println!("{}", PathBuf::from(act_dir_entry.path()).as_path().display());
+
                     let exp_meta = fs::metadata(expected?.path())?;
-                    let act_meta = fs::metadata(actual?.path())?;
+                    let act_meta = fs::metadata(act_dir_entry.path())?;
                     assert_eq!(exp_meta.file_type().is_dir(), act_meta.file_type().is_dir());
                     assert_eq!(exp_meta.file_type().is_file(), act_meta.file_type().is_file());
                     assert_eq!(exp_meta.file_type().is_symlink(), act_meta.file_type().is_symlink());
-                    // assert_eq!(exp_meta.created()?, act_meta.created()?);
-                    // assert_eq!(exp_meta.accessed()?, act_meta.accessed()?);
-                    //assert_eq!(exp_meta.modified()?, act_meta.modified()?);
+
+                    if !is_root_dir {
+                        // Time values can not be tested on root dir
+                        use std::os::unix::fs::MetadataExt; // Use unix time functions
+                        assert_eq!(exp_meta.ctime(), act_meta.ctime());
+                        // TODO Nanosecond precision
+                        // assert_eq!(exp_meta.ctime_nsec()?, act_meta.ctime_nsec()?);
+                        assert_eq!(exp_meta.mtime(), act_meta.mtime());
+                        // assert_eq!(exp_meta.mtime_nsec(), act_meta.mtime_nsec());
+                    }
+
                     if exp_meta.file_type().is_dir() {
                         // This is necessary because we cannot guarantee 100% matches here
                         assert!(act_meta.len() > 0);
