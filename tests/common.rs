@@ -1,4 +1,3 @@
-
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str;
@@ -6,34 +5,70 @@ use std::fs;
 use std::thread;
 use std::sync::mpsc::sync_channel;
 
-type TarFsTestResult = Result<(), Box<std::error::Error>>;
+const TEST_ROOT: &str = "/workspace/tarfs/.test";
+const TEST_MOUNTPOINT_SUBDIR: &str = "mnt";
+
+type TarFsTestResult = Result<(), Box<dyn std::error::Error>>;
 
 pub struct TarFsTest {
-    filename: PathBuf,
+    source_path: PathBuf,
     mountpoint: PathBuf
 }
 
 impl TarFsTest {
-    pub fn new(filename: &str, mountpoint: &str) -> TarFsTest {
+    pub fn new(source_path: &str) -> TarFsTest {
+        let mut mountpoint = PathBuf::from(TEST_ROOT);
+        mountpoint.push(TEST_MOUNTPOINT_SUBDIR);
         TarFsTest {
-            filename: PathBuf::from(filename),
-            mountpoint: PathBuf::from(mountpoint)
+            source_path: PathBuf::from(source_path),
+            mountpoint: mountpoint,
         }
     }
 
     pub fn perform(&self, test: fn(&Path) -> TarFsTestResult) -> TarFsTestResult {
-        self.setup_fs_mnt()?;
+        let archive_path = self.create_test_tar()?;
+        self.setup_fs_mnt(&archive_path)?;
 
         test(&self.mountpoint)?;
 
         Ok(())
     }
 
-    fn setup_fs_mnt(&self) -> TarFsTestResult {
-        let filename = PathBuf::from(self.filename.to_str().unwrap());
-        let mountpoint = PathBuf::from(self.mountpoint.to_str().unwrap());
+    fn create_test_tar(&self) -> Result<PathBuf, Box<dyn std::error::Error>> {
+        let mut archive_path = PathBuf::from(TEST_ROOT);
+        let mut archive_filename = self.source_path.file_name().unwrap().to_os_string();
+        archive_filename.push(".tar");
+        archive_path.push(&archive_filename);
 
-        // Make sure we aren't comparing apples with oranges
+        let archive_parent = archive_path.parent().unwrap();
+        if !archive_parent.exists() {
+            fs::create_dir_all(&archive_parent)?;
+        }
+
+        match Command::new("bash")
+            // posix format is needed for nanosecond precision for timestamps
+            .args(&["-c", &format!("tar cf {} -H posix ./*", archive_path.to_str().unwrap())])
+            .current_dir(&self.source_path)
+            .output() {
+            Ok(out) => {
+                if !out.status.success() {
+                    println!("stderr: {}", std::str::from_utf8(&out.stderr).unwrap());
+                    println!("stdout: {}", std::str::from_utf8(&out.stdout).unwrap());
+                }
+                Ok(archive_path)
+            },
+            Err(e) => {
+                println!("bash -c \"tar cf ... \" error: {}", e);
+                Err(Box::new(e))
+            },
+        }
+    }
+
+    fn setup_fs_mnt(&self, archive_path: &Path) -> TarFsTestResult {
+        let archive_path = PathBuf::from(archive_path);
+        let mountpoint = self.mountpoint.clone();
+
+        // Clean state
         if mountpoint.exists() {
             fs::remove_dir(&mountpoint)?;
         }
@@ -41,7 +76,7 @@ impl TarFsTest {
 
         let (tx, rx) = sync_channel(1);
         thread::spawn(move || {
-            match tarfslib::setup_tar_mount(&filename, &mountpoint, Some(tx)) {
+            match tarfslib::setup_tar_mount(&archive_path, &mountpoint, Some(tx)) {
                 Ok(_) => (),
                 Err(e) => println!("setup_tar_mount error: {}", e)
             }
@@ -61,9 +96,9 @@ impl TarFsTest {
             Ok(_) => (),
             Err(e) => println!("sudo umount error: {}", e),
         };
-        match fs::remove_dir(&self.mountpoint) {
+        match fs::remove_dir_all(TEST_ROOT) {
             Ok(_) => (),
-            Err(_) => (),   // ignore any errors here, just cleanup
+            Err(e) => println!("error during cleanup: {}", e),
         };
     }
 }

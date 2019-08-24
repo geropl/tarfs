@@ -4,9 +4,11 @@ use std::{path::Path, path::PathBuf};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::cell::{RefCell};
-use std::str::Utf8Error;
 use std::vec::Vec;
 use std::time::{SystemTime, UNIX_EPOCH, Instant};
+use  std::collections::HashMap;
+
+use time::Timespec;
 
 use log;
 use log::{info, error};
@@ -136,8 +138,9 @@ impl TarIndexer {
     }
 
     fn create_root_node(ino: u64, root_permissions: &Permissions) -> INode {
-        let start = SystemTime::now();
-        let since_epoch = start.duration_since(UNIX_EPOCH).expect("SystemTime error");
+        let now = SystemTime::now();
+        let since_epoch = now.duration_since(UNIX_EPOCH).expect("SystemTime error");
+        let now = Timespec::new(since_epoch.as_secs() as i64, since_epoch.subsec_nanos() as i32);
         INode {
             ino,
             entry: TarIndexEntry {
@@ -151,7 +154,9 @@ impl TarIndexer {
                 mode: root_permissions.mode,
                 uid: root_permissions.uid,
                 gid: root_permissions.gid,
-                mtime: since_epoch.as_secs(),
+                mtime: now,
+                atime: now,
+                ctime: now,
                 ftype: tar::EntryType::Directory,
             },
             parent_id: None,
@@ -161,17 +166,14 @@ impl TarIndexer {
 
     fn entry_to_index_entry(index: u64, entry: &mut tar::Entry<'_, &File>) -> Result<TarIndexEntry, io::Error> {
         let link_name = entry.link_name()?.map(|l| l.to_path_buf());
-
-        if let Some(exts) = entry.pax_extensions()? {
-            for ext in exts {
-                match TarIndexer::pax_extension(ext?) {
-                    Err(_) => Err(io::Error::from(std::io::ErrorKind::InvalidData)),
-                    Ok(_) => Ok(())
-                }?;
-            }
-        }
-
+        let exts = TarIndexer::collect_pax_extensions(entry)?;
         let header = entry.header();
+
+        let hdr_mtime = Timespec::new(header.mtime()? as i64, 0);
+        let mtime = TarIndexer::get_timespec_for(&exts, "mtime", &hdr_mtime);
+        let atime = TarIndexer::get_timespec_for(&exts, "atime", &mtime);
+        let ctime = TarIndexer::get_timespec_for(&exts, "ctime", &mtime);
+
         let path = PathBuf::from(entry.path()?);
         let name = PathBuf::from(path.as_path().file_name().expect("entry without name"));
         Ok(TarIndexEntry{
@@ -185,16 +187,65 @@ impl TarIndexer {
             mode: header.mode()?,
             uid: header.uid()?,
             gid: header.gid()?,
-            mtime: header.mtime()?,
+            mtime,
+            atime,
+            ctime,
             ftype: header.entry_type(),
         })
     }
 
-    fn pax_extension(ext: tar::PaxExtension) -> Result<(), Utf8Error> {
-        let k = ext.key()?;
-        let v = ext.value()?;
-        info!("{}: {}", k, v);
-
-        Ok(())
+    fn collect_pax_extensions<'a>(entry: &'a mut tar::Entry<'_, &File>) -> Result<HashMap<String, String>, io::Error> {
+        let mut result = HashMap::new();
+        let exts = match entry.pax_extensions() {
+            Err(e) => return Err(e),
+            Ok(None) => return Ok(result),
+            Ok(Some(exts)) => exts,
+        };
+        for ext in exts {
+            let ext = match ext {
+                Err(_) => continue,
+                Ok(ext) => ext,
+            };
+            let key = ext.key();
+            if key.is_err() {
+                continue;
+            }
+            let key: &str = key.unwrap();
+            let value: &str = ext.value().unwrap_or("");
+            result.insert(key.to_owned(), value.to_owned());
+        }
+        Ok(result)
     }
+
+    fn get_timespec_for(exts: &HashMap<String, String>, key: &str, fallback: &Timespec) -> Timespec {
+        let mtime = TarIndexer::parse_timespec_from_pax_extension(&exts, key);
+        return mtime.unwrap_or(*fallback);
+    }
+
+    fn parse_timespec_from_pax_extension(exts: &HashMap<String, String>, key: &str) -> Option<Timespec> {
+        let value = exts.get(key);
+        if value.is_none() {
+            return None;
+        }
+
+        use std::num::ParseIntError;
+        type ParsedInt = Result<i64, ParseIntError>;
+
+        let splits: Vec<&str> = value.unwrap().split('.').collect();
+        let splits_parsed: Vec<ParsedInt> = splits.iter().map(|&s| s.parse::<i64>()).collect();
+        let splits_parsed_ref: &[ParsedInt] = &splits_parsed;
+        match splits_parsed_ref {
+            [Ok(s), Ok(ns)] => Some(Timespec::new(*s, *ns as i32)),
+            [Ok(s)] => Some(Timespec::new(*s, 0)),
+            _ => return None,
+        }
+    }
+
+    // fn debug_print_pax_extension(ext: tar::PaxExtension) -> Result<(), Utf8Error> {
+    //     let k = ext.key()?;
+    //     let v = ext.value()?;
+    //     println!("key: {} | value: {}", k, v);
+
+    //     Ok(())
+    // }
 }

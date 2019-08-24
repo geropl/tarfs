@@ -6,7 +6,7 @@ use clap::{App, Arg};
 
 use std::path::PathBuf;
 
-fn main() -> Result<(), Box<std::error::Error>>  {
+fn main() -> Result<(), Box<dyn std::error::Error>>  {
     let matches = App::new("tarfs")
         .version("1.0")
         .author("Gero Posmyk-Leinemann <geroleinemann@gmx.de>")

@@ -231,9 +231,8 @@ impl<'f> Filesystem for TarFs<'f> {
 
 fn attrs(node: &INode) -> fuse::FileAttr {
     let kind = tar_entrytype_to_filetype(node.entry.ftype);
-    let mtime = Timespec::new(node.entry.mtime as i64, 0);
     let size = match &node.entry.link_name {
-        // For symlinks, fuse wants the length of the OsStr...
+        // For symlinks, fuse/the kernel wants the length of the OsStr...
         Some(ln) => ln.as_os_str().len() as u64,
         None => match kind {
             fuse::FileType::Directory => 4096,    // We're mimicking ext4 here
@@ -244,10 +243,10 @@ fn attrs(node: &INode) -> fuse::FileAttr {
         ino: node.ino,
         size,
         blocks: 0,
-        atime: mtime,
-        mtime: mtime,
-        ctime: mtime,
-        crtime: mtime, // macOS only
+        atime: node.entry.atime,
+        mtime: node.entry.mtime,
+        ctime: node.entry.ctime,
+        crtime: node.entry.ctime, // macOS only
         kind,
         perm: node.entry.mode as u16,
         nlink: 1,

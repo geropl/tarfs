@@ -14,7 +14,7 @@ use walkdir::WalkDir;
 mod common;
 use common::TarFsTest;
 
-fn ls_al(path: &str) -> Result<String, Box<std::error::Error>> {
+fn ls_al(path: &str) -> Result<String, Box<dyn std::error::Error>> {
     let out = Command::new("ls")
             .args(&["-al", path])
             .output()?;
@@ -23,8 +23,8 @@ fn ls_al(path: &str) -> Result<String, Box<std::error::Error>> {
 
 #[test]
 #[ignore]
-fn tarfs_ls() -> Result<(), Box<std::error::Error>> {
-    let test = TarFsTest::new("tests/ar.tar", ".tmp/mnt");
+fn tarfs_ls() -> Result<(), Box<dyn std::error::Error>> {
+    let test = TarFsTest::new("tests/ar.dir");
     // This does not work due to:
     //  1. dir sizes (fixable at all?)
     //  2. root dir permissions (TODO)
@@ -41,8 +41,8 @@ fn tarfs_ls() -> Result<(), Box<std::error::Error>> {
 }
 
 #[test]
-fn tarfs_recursive_compare() -> Result<(), Box<std::error::Error>> {
-    let test = TarFsTest::new("tests/ar.tar", ".tmp/mnt");
+fn tarfs_recursive_compare() -> Result<(), Box<dyn std::error::Error>> {
+    let test = TarFsTest::new("tests/ar.dir");
 
     test.perform(|mountpoint| {
         let path_cmp = |e1: &walkdir::DirEntry, e2: &walkdir::DirEntry| {
@@ -73,10 +73,9 @@ fn tarfs_recursive_compare() -> Result<(), Box<std::error::Error>> {
                         // Time values can not be tested on root dir
                         use std::os::unix::fs::MetadataExt; // Use unix time functions
                         assert_eq!(exp_meta.ctime(), act_meta.ctime());
-                        // TODO Nanosecond precision
-                        // assert_eq!(exp_meta.ctime_nsec()?, act_meta.ctime_nsec()?);
+                        assert_eq!(exp_meta.ctime_nsec(), act_meta.ctime_nsec());
                         assert_eq!(exp_meta.mtime(), act_meta.mtime());
-                        // assert_eq!(exp_meta.mtime_nsec(), act_meta.mtime_nsec());
+                        assert_eq!(exp_meta.mtime_nsec(), act_meta.mtime_nsec());
                     }
 
                     if exp_meta.file_type().is_dir() {

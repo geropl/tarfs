@@ -42,7 +42,6 @@ TODO
  [![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/geropl/tarfs)
 
 ### ToDo
- - [ ] nanosecond precision for mtime/ctime
  - [ ] hard links
  - [ ] optimize reads by using a buffered reader
  - [ ] try to create static binary by replacing relevant parts in https://github.com/zargony/rust-fuse

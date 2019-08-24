@@ -10,6 +10,7 @@ use std::cell::{RefCell};
 use std::vec::Vec;
 use std::ffi::{OsStr};
 
+use time::Timespec;
 use log::{trace, error};
 
 #[derive(Debug)]
@@ -34,7 +35,9 @@ pub struct TarIndexEntry {
     pub mode: u32,
     pub uid: u64,
     pub gid: u64,
-    pub mtime: u64,
+    pub mtime: Timespec,
+    pub atime: Timespec,
+    pub ctime: Timespec,
     pub ftype: tar::EntryType,
 }
 

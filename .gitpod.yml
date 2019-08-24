@@ -3,6 +3,6 @@ image:
 tasks:
 - command: "cargo test"
 - command: "cargo watch -x check"
-  openIn: bottom
-  openMode: split-right
+  openIn: right
+  openMode: tab-before
 privileged: true
