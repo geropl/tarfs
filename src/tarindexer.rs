@@ -235,7 +235,16 @@ impl TarIndexer {
         let splits_parsed: Vec<ParsedInt> = splits.iter().map(|&s| s.parse::<i64>()).collect();
         let splits_parsed_ref: &[ParsedInt] = &splits_parsed;
         match splits_parsed_ref {
-            [Ok(s), Ok(ns)] => Some(Timespec::new(*s, *ns as i32)),
+            [Ok(s), Ok(ns)] => {
+                let mut ns = *ns as i32;
+                // tar seems to eat trailing zeros here.
+                // To exactlly mimick the source stats,
+                // adjust the exact amount of trailing zeros for nanoseconds
+                while ns / 100000000 == 0 {
+                    ns = ns * 10;
+                }
+                Some(Timespec::new(*s, ns))
+            },
             [Ok(s)] => Some(Timespec::new(*s, 0)),
             _ => return None,
         }
