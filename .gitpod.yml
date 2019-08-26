@@ -6,3 +6,7 @@ tasks:
   openIn: right
   openMode: tab-before
 privileged: true
+
+vscode:
+  extensions:
+    - bungcip.better-toml@0.3.2:3QfgGxxYtGHfJKQU7H0nEw==
