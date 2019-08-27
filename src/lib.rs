@@ -1,16 +1,4 @@
-// fs
-extern crate fuse;
-extern crate libc;
-extern crate time;
-
-// index
-extern crate tar;
-
-// both
-extern crate log;
-extern crate env_logger;
-#[macro_use]
-extern crate failure;
+use failure::Fail;
 
 mod tarindex;
 mod tarindexer;

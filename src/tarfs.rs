@@ -1,4 +1,3 @@
-use libc::ENODATA;
 use std::path::{Path};
 use std::ffi::{OsStr};
 use std::{path::PathBuf};
@@ -9,7 +8,7 @@ use std::sync::mpsc;
 
 use time::Timespec;
 
-use libc::{ENOENT};
+use libc::{ENOENT, ENODATA};
 
 use fuse;
 use fuse::{FileAttr, FileType, Filesystem, Request, ReplyAttr, ReplyEntry, ReplyDirectory, ReplyData};

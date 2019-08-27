@@ -1,6 +1,5 @@
-extern crate env_logger;
-extern crate tarfslib as lib;
-extern crate clap;
+use env_logger;
+use tarfslib as lib;
 
 use clap::{App, Arg};
 

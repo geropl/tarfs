@@ -1,6 +1,6 @@
-extern crate pretty_assertions;
-extern crate walkdir;
-extern crate tarfslib;
+use pretty_assertions;
+use walkdir;
+use tarfslib;
 
 use std::process::Command;
 use std::str;
