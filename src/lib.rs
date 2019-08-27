@@ -1,3 +1,4 @@
+extern crate libc_unix_shim as libc;
 use failure::Fail;
 
 mod tarindex;
