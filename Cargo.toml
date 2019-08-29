@@ -13,10 +13,10 @@ name = "tarfs"
 path = "src/main.rs"
 
 [dependencies]
-fuse = "0.3.1"
+fuse = { git = "https://github.com/geropl/rust-fuse", branch = "0.3.1-nolibc", default-features = false, features = ["no-libc"] }
 tar = "0.4.26"
 time = "0.1.42"
-libc = "0.2.60"
+libc-unix-shim = { git = "https://github.com/geropl/rs-libc-unix-shim", branch = "master" }
 log = { version = "0.4", features = ["max_level_trace", "release_max_level_info"] }
 env_logger = "0.6.2"
 clap = "2"
