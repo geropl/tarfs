@@ -32,7 +32,8 @@ pub fn setup_tar_mount(filepath: &Path, mountpoint: &Path, start_signal: Option<
 
     // Open archive and index it
     let file = File::open(filepath)?;
-    let mut index = TarIndexer::build_index_for(&file, &options)?;
+    let indexer = TarIndexer{};
+    let mut index = indexer.build_index_for(&file, &options)?;
 
     // And finally: Mount it
     let start_signal = match start_signal {
