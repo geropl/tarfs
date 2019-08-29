@@ -53,4 +53,7 @@ TODO
    - types:
      - libc::iovec
      - ... and a lot more
+   - fuse
+     - pub fn fuse_mount_compat25(mountpoint: *const c_char, args: *const fuse_args) -> c_int;
+     - pub fn fuse_unmount_compat22(mountpoint: *const c_char);
  - [ ] ...

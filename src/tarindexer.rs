@@ -45,7 +45,7 @@ pub struct Permissions {
 pub struct TarIndexer {}
 
 impl TarIndexer {
-    pub fn build_index_for<'f>(file: &'f File, options: &Options) -> Result<TarIndex<'f>, io::Error> {
+    pub fn build_index_for<'f>(&self, file: &'f File, options: &Options) -> Result<TarIndex<'f>, io::Error> {
         let now = Instant::now();
         info!("Starting indexing archive...");
 
@@ -61,7 +61,7 @@ impl TarIndexer {
         };
 
         let mut path_map: PathMap = BTreeMap::new();
-        let root_node = TarIndexer::create_root_node(get(&mut inode_id), &options.root_permissions);
+        let root_node = self.create_root_node(get(&mut inode_id), &options.root_permissions);
         let root_path = root_node.entry.path.to_owned();
         let root_pe = PathEntry {
             id: root_node.ino,
@@ -71,16 +71,16 @@ impl TarIndexer {
         path_map.insert(root_path, ptr(root_pe));
 
         for (idx, entry) in archive.entries()?.enumerate() {
-            let index_entry = TarIndexer::entry_to_index_entry(idx as u64, &mut entry?)?;
+            let index_entry = self.entry_to_index_entry(idx as u64, &mut entry?)?;
 
             // Find parent!
             let parent_path = index_entry.path.parent().expect("a tar entry without parent component!");
-            let parent_pe = TarIndexer::get_or_create_path_entry(&mut path_map, parent_path, || {
+            let parent_pe = self.get_or_create_path_entry(&mut path_map, parent_path, || {
                 get(&mut inode_id)
             });
 
             // Entry already present?
-            let path_entry = TarIndexer::get_or_create_path_entry(&mut path_map, &index_entry.path, || {
+            let path_entry = self.get_or_create_path_entry(&mut path_map, &index_entry.path, || {
                 get(&mut inode_id)
             });
 
@@ -120,7 +120,7 @@ impl TarIndexer {
         Ok(index)
     }
 
-    fn get_or_create_path_entry<F>(path_map: &mut PathMap, path: &Path, mut get_ino: F) -> Ptr<PathEntry>
+    fn get_or_create_path_entry<F>(&self, path_map: &mut PathMap, path: &Path, mut get_ino: F) -> Ptr<PathEntry>
         where
             F: FnMut() -> u64 {
         match path_map.get(path) {
@@ -137,7 +137,7 @@ impl TarIndexer {
         }
     }
 
-    fn create_root_node(ino: u64, root_permissions: &Permissions) -> INode {
+    fn create_root_node(&self, ino: u64, root_permissions: &Permissions) -> INode {
         let now = SystemTime::now();
         let since_epoch = now.duration_since(UNIX_EPOCH).expect("SystemTime error");
         let now = Timespec::new(since_epoch.as_secs() as i64, since_epoch.subsec_nanos() as i32);
@@ -164,15 +164,15 @@ impl TarIndexer {
         }
     }
 
-    fn entry_to_index_entry(index: u64, entry: &mut tar::Entry<'_, &File>) -> Result<TarIndexEntry, io::Error> {
+    fn entry_to_index_entry(&self, index: u64, entry: &mut tar::Entry<'_, &File>) -> Result<TarIndexEntry, io::Error> {
         let link_name = entry.link_name()?.map(|l| l.to_path_buf());
-        let exts = TarIndexer::collect_pax_extensions(entry)?;
+        let exts = self.collect_pax_extensions(entry)?;
         let header = entry.header();
 
         let hdr_mtime = Timespec::new(header.mtime()? as i64, 0);
-        let mtime = TarIndexer::get_timespec_for(&exts, "mtime", &hdr_mtime);
-        let atime = TarIndexer::get_timespec_for(&exts, "atime", &mtime);
-        let ctime = TarIndexer::get_timespec_for(&exts, "ctime", &mtime);
+        let mtime = self.get_timespec_for(&exts, "mtime", &hdr_mtime);
+        let atime = self.get_timespec_for(&exts, "atime", &mtime);
+        let ctime = self.get_timespec_for(&exts, "ctime", &mtime);
 
         let path = PathBuf::from(entry.path()?);
         let name = PathBuf::from(path.as_path().file_name().expect("entry without name"));
@@ -194,7 +194,7 @@ impl TarIndexer {
         })
     }
 
-    fn collect_pax_extensions<'a>(entry: &'a mut tar::Entry<'_, &File>) -> Result<HashMap<String, String>, io::Error> {
+    fn collect_pax_extensions<'a>(&self, entry: &'a mut tar::Entry<'_, &File>) -> Result<HashMap<String, String>, io::Error> {
         let mut result = HashMap::new();
         let exts = match entry.pax_extensions() {
             Err(e) => return Err(e),
@@ -217,12 +217,12 @@ impl TarIndexer {
         Ok(result)
     }
 
-    fn get_timespec_for(exts: &HashMap<String, String>, key: &str, fallback: &Timespec) -> Timespec {
-        let mtime = TarIndexer::parse_timespec_from_pax_extension(&exts, key);
+    fn get_timespec_for(&self, exts: &HashMap<String, String>, key: &str, fallback: &Timespec) -> Timespec {
+        let mtime = self.parse_timespec_from_pax_extension(&exts, key);
         return mtime.unwrap_or(*fallback);
     }
 
-    fn parse_timespec_from_pax_extension(exts: &HashMap<String, String>, key: &str) -> Option<Timespec> {
+    fn parse_timespec_from_pax_extension(&self, exts: &HashMap<String, String>, key: &str) -> Option<Timespec> {
         let value = exts.get(key);
         if value.is_none() {
             return None;
