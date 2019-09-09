@@ -1,6 +1,5 @@
 use pretty_assertions;
 use walkdir;
-use tarfslib;
 
 use std::process::Command;
 use std::str;
@@ -63,33 +62,67 @@ fn tarfs_recursive_compare() -> Result<(), Box<dyn std::error::Error>> {
                     let is_root_dir = act_dir_entry.path().to_str().unwrap() == mountpoint_str;
                     println!("{}", PathBuf::from(act_dir_entry.path()).as_path().display());
 
+                    use std::os::unix::fs::MetadataExt; // Use unix specific trait methods
                     let exp_meta = fs::metadata(expected?.path())?;
                     let act_meta = fs::metadata(act_dir_entry.path())?;
-                    assert_eq!(exp_meta.file_type().is_dir(), act_meta.file_type().is_dir());
-                    assert_eq!(exp_meta.file_type().is_file(), act_meta.file_type().is_file());
-                    assert_eq!(exp_meta.file_type().is_symlink(), act_meta.file_type().is_symlink());
 
+                    // File types
+                    assert_eq!(exp_meta.file_type().is_dir(), act_meta.file_type().is_dir(), "is dir");
+                    assert_eq!(exp_meta.file_type().is_file(), act_meta.file_type().is_file(), "is file");
+                    assert_eq!(exp_meta.file_type().is_symlink(), act_meta.file_type().is_symlink(), "is symlink");
+
+                    // TODO hard links
+                    // assert_eq!(exp_meta.nlink(), act_meta.nlink(), "nlink");
+
+                    // Times
                     if !is_root_dir {
-                        // Time values can not be tested on root dir
-                        use std::os::unix::fs::MetadataExt; // Use unix time functions
-                        assert_eq!(exp_meta.ctime(), act_meta.ctime());
-                        assert_eq!(exp_meta.ctime_nsec(), act_meta.ctime_nsec());
-                        assert_eq!(exp_meta.mtime(), act_meta.mtime());
-                        assert_eq!(exp_meta.mtime_nsec(), act_meta.mtime_nsec());
+                        // These values can not be tested on root dir
+                        assert_eq!(exp_meta.ctime(), act_meta.ctime(), "ctime");
+                        assert_eq!(exp_meta.ctime_nsec(), act_meta.ctime_nsec(), "ctime nsecs");
+                        assert_eq!(exp_meta.mtime(), act_meta.mtime(), "mtime secs");
+                        assert_eq!(exp_meta.mtime_nsec(), act_meta.mtime_nsec(), "mtime nsecs");
                     }
 
+                    // Size
                     if exp_meta.file_type().is_dir() {
                         // This is necessary because we cannot guarantee 100% matches here
-                        assert!(act_meta.len() > 0);
+                        assert!(act_meta.len() > 0, "len");
                     } else {
-                        assert_eq!(exp_meta.len(), act_meta.len());
+                        assert_eq!(exp_meta.len(), act_meta.len(), "len");
                     }
-                    assert_eq!(exp_meta.permissions(), act_meta.permissions());
+
+                    // Permissions
+                    assert_eq!(exp_meta.uid(), act_meta.uid(), "uid");
+                    assert_eq!(exp_meta.gid(), act_meta.gid(), "gid");
+                    assert_eq!(exp_meta.permissions(), act_meta.permissions(), "permission");
                 },
                 (None, None) => break,  // Done
             };
         };
 
+        Ok(())
+    })?;
+
+    Ok(())
+}
+
+#[test]
+#[ignore]
+fn tarfs_hard_link() -> Result<(), Box<dyn std::error::Error>> {
+    let test = TarFsTest::new("tests/ar.dir");
+
+    test.perform(|mountpoint| {
+        let mut exp_link_path = PathBuf::from(mountpoint);
+        exp_link_path.push("a");
+        let mut act_link_path = PathBuf::from(mountpoint);
+        act_link_path.push("hardlinkToa");
+
+        use std::os::unix::fs::MetadataExt;
+        let exp_meta = fs::metadata(&exp_link_path)?;
+        let act_meta = fs::metadata(&act_link_path)?;
+
+        // hard links should return same ino as target file
+        assert_eq!(exp_meta.ino(), act_meta.ino(), "ino");
         Ok(())
     })?;
 

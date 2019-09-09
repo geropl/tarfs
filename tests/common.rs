@@ -5,6 +5,8 @@ use std::fs;
 use std::thread;
 use std::sync::mpsc::sync_channel;
 
+use tarfslib;
+
 const TEST_ROOT: &str = "/workspace/tarfs/.test";
 const TEST_MOUNTPOINT_SUBDIR: &str = "mnt";
 
