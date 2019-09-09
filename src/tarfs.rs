@@ -13,12 +13,10 @@ use libc::{ENOENT, ENODATA};
 use fuse;
 use fuse::{FileAttr, FileType, Filesystem, Request, ReplyAttr, ReplyEntry, ReplyDirectory, ReplyData};
 
-use tar::EntryType;
-
 use log;
 use log::{debug, info, error, trace};
 
-use super::tarindex::{TarIndex, INode};
+use super::tarindex::{TarIndex};
 
 const NAME_OPTIONS: &[&str] = &[
     "fsname=tarfs",
@@ -85,7 +83,7 @@ impl<'f> Filesystem for TarFs<'f> {
         let path = PathBuf::from(name);
         debug!("lookup(parent={}, name={})", parent, path.to_str().unwrap());
 
-        let node = match self.index.lookup_child(parent, PathBuf::from(name)) {
+        let entry = match self.index.lookup_child(parent, PathBuf::from(name)) {
             Some(a) => a,
             None => {
                 // According to https://github.com/libfuse/libfuse/blob/master/include/fuse_lowlevel.h#L60
@@ -97,38 +95,38 @@ impl<'f> Filesystem for TarFs<'f> {
                 return;
             },
         };
-        reply.entry(&ttl_max(), &attrs(&node), 0);
+        reply.entry(&ttl_max(), &entry.attrs, 0);
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         debug!("getattr(ino={})", ino);
 
-        let node = match self.index.get_node_by_ino(ino) {
+        let entry = match self.index.get_entry_by_ino(ino) {
             None => {
                 reply.error(ENOENT);
                 error!("lookup: no entry");
                 return
             },
-            Some(n) => n,
+            Some(e) => e,
         };
 
-        reply.attr(&ttl_max(), &attrs(&node));
+        reply.attr(&ttl_max(), &entry.attrs);
     }
 
     fn readdir(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64, mut reply: ReplyDirectory) {
         debug!("readdir(ino={}, fh={}, offset={})", ino, fh, offset);
 
-        let node = match self.index.get_node_by_ino(ino) {
+        let entry = match self.index.get_entry_by_ino(ino) {
             None => {
                 reply.error(ENOENT);
                 error!("readdir: no entry");
                 return
             },
-            Some(n) => n,
+            Some(e) => e,
         };
 
-        if node.entry.ftype != EntryType::Directory {
-            error!("readdir: ino {}, index {} is no dir!", ino, node.entry.index);
+        if entry.attrs.kind != fuse::FileType::Directory {
+            error!("readdir: ino {} is no dir!", ino);
             return
         }
 
@@ -136,7 +134,7 @@ impl<'f> Filesystem for TarFs<'f> {
         if offset == 0 {
             let off = 1;
             let kind = FileType::Directory;
-            full = reply.add(node.ino, off, kind, ".");
+            full = reply.add(entry.ino, off, kind, ".");
             trace!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, ".");
             if full {
                 reply.ok();
@@ -146,8 +144,8 @@ impl<'f> Filesystem for TarFs<'f> {
 
         if offset <= 1 {
             // Handle fs root: same ino as
-            let ino = match node.parent_id {
-                None => node.ino,
+            let ino = match entry.parent_ino {
+                None => entry.ino,
                 Some(ino) => ino,
             };
 
@@ -163,10 +161,10 @@ impl<'f> Filesystem for TarFs<'f> {
 
         let children_offset = (offset - 2).max(0);
         let mut off: i64 = 2 + children_offset + 1;
-        for child in &node.children.borrow()[children_offset as usize..] {
+        for child in &entry.children.borrow()[children_offset as usize..] {
             let ino = child.ino;
-            let kind = attrs(child).kind;
-            let name = &child.entry.name;
+            let kind = child.attrs.kind;
+            let name = &child.name;
             trace!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, name.display());
             full = reply.add(ino, off, kind, name);
             off += 1;
@@ -180,18 +178,18 @@ impl<'f> Filesystem for TarFs<'f> {
     fn read(&mut self, _req: &Request, ino: u64, fh: u64, offset: i64, size: u32, reply: ReplyData) {
         debug!("read(ino={}, fh={}, offset={}, size={})", ino, fh, offset, size);
 
-        let node = match self.index.get_node_by_ino(ino) {
+        let entry = match self.index.get_entry_by_ino(ino) {
             None => {
                 reply.error(ENOENT);
                 error!("lookup: no entry");
                 return
             },
-            Some(n) => n.clone(),
+            Some(e) => e.clone(),
         };
 
-        let bytes = match self.index.read(&node, offset as u64, size as u64) {
+        let bytes = match self.index.read(&entry, offset as u64, size as u64) {
             Err(e) => {
-                error!("Error reading from file {}: {}", node.entry.path.display(), e);
+                error!("Error reading from file {}: {}", entry.path.display(), e);
                 reply.error(ENODATA);
                 return
             },
@@ -203,16 +201,16 @@ impl<'f> Filesystem for TarFs<'f> {
     fn readlink(&mut self, _req: &Request, ino: u64, reply: ReplyData) {
         debug!("readlink(ino={})", ino);
 
-        let node = match self.index.get_node_by_ino(ino) {
+        let entry = match self.index.get_entry_by_ino(ino) {
             None => {
                 reply.error(ENOENT);
                 error!("readlink: no entry");
                 return
             },
-            Some(n) => n.clone(),
+            Some(e) => e.clone(),
         };
 
-        match &node.entry.link_name {
+        match &entry.link_name {
             Some(path) => {
                 use std::os::unix::ffi::OsStrExt;
 
@@ -224,48 +222,6 @@ impl<'f> Filesystem for TarFs<'f> {
                 return
             }
         }
-    }
-}
-
-
-fn attrs(node: &INode) -> fuse::FileAttr {
-    let kind = tar_entrytype_to_filetype(node.entry.ftype);
-    let size = match &node.entry.link_name {
-        // For symlinks, fuse/the kernel wants the length of the OsStr...
-        Some(ln) => ln.as_os_str().len() as u64,
-        None => match kind {
-            fuse::FileType::Directory => 4096,    // We're mimicking ext4 here
-            _ => node.entry.filesize,       // The default case: Size "on disk" is the same as the size in the tar (uncompressed) archive
-        },
-    };
-    fuse::FileAttr {
-        ino: node.ino,
-        size,
-        blocks: 0,
-        atime: node.entry.atime,
-        mtime: node.entry.mtime,
-        ctime: node.entry.ctime,
-        crtime: node.entry.ctime, // macOS only
-        kind,
-        perm: node.entry.mode as u16,
-        nlink: 1,
-        uid: node.entry.uid as u32,
-        gid: node.entry.gid as u32,
-        rdev: 0,
-        flags: 0,
-    }
-}
-
-fn tar_entrytype_to_filetype(ftype: tar::EntryType) -> fuse::FileType {
-    match ftype {
-        EntryType::Regular => FileType::RegularFile,
-        EntryType::Directory => FileType::Directory,
-        EntryType::Symlink => FileType::Symlink,
-        t => {
-            println!("Unsupported EntryType: {:?}", t);
-            FileType::RegularFile
-        },
-        // EntryType::Link => FileType::
     }
 }
 
