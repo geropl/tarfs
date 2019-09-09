@@ -240,7 +240,9 @@ impl TarIndexer {
                 // tar seems to eat trailing zeros here.
                 // To exactlly mimick the source stats,
                 // adjust the exact amount of trailing zeros for nanoseconds
-                while ns / 100000000 == 0 {
+                // Ex1:    27993590
+                // Tar1:   2799359
+                while ns / 10000000 == 0 {
                     ns = ns * 10;
                 }
                 Some(Timespec::new(*s, ns))
