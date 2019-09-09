@@ -3,46 +3,38 @@ use std::fmt;
 use std::io;
 use std::io::{Seek, SeekFrom, Read};
 use std::{path::Path, path::PathBuf};
-use std::option;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::cell::{RefCell};
 use std::vec::Vec;
 use std::ffi::{OsStr};
 
-use time::Timespec;
 use log::{trace, error};
 
 #[derive(Debug)]
-pub struct INode {
+pub struct IndexEntry {
     pub ino: u64,
-    pub entry: TarIndexEntry,
-    pub parent_id: Option<u64>,
-    /// TODO Ideally, this would be Vec<Rc<INode>>, but IDK how to achieve this without unsafe (cmp. PathEntry below)
-    ///
-    pub children: Rc<RefCell<Vec<Rc<INode>>>>,
+    pub parent_ino: Option<u64>,
+
+    pub path: PathBuf,
+    pub name: PathBuf,
+    pub link_name: Option<PathBuf>,
+    pub attrs: fuse::FileAttr,
+
+    pub file_offsets: Vec<TarEntryPointer>,
+
+    /// TODO Ideally, this would be Vec<Rc<INode>>, but IDK how to achieve this without unsafe (cmp. tarindexer.rs)
+    pub children: Rc<RefCell<Vec<Rc<IndexEntry>>>>,
 }
 
 #[derive(Debug)]
-pub struct TarIndexEntry {
-    pub index: u64,
-    pub header_offset: u64,
+pub struct TarEntryPointer {
     pub raw_file_offset: u64,
-    pub name: PathBuf,
-    pub path: PathBuf,
-    pub link_name: option::Option<PathBuf>,
     pub filesize: u64,
-    pub mode: u32,
-    pub uid: u64,
-    pub gid: u64,
-    pub mtime: Timespec,
-    pub atime: Timespec,
-    pub ctime: Timespec,
-    pub ftype: tar::EntryType,
 }
 
-type ChildMap = BTreeMap<PathBuf, Rc<INode>>;
-type INodeMap = BTreeMap<u64, Rc<INode>>;
+type ChildMap = BTreeMap<PathBuf, Rc<IndexEntry>>;
+type INodeMap = BTreeMap<u64, Rc<IndexEntry>>;
 
 /// This is the resulting index struct.
 /// It holds a reference to the given archive file as it needs it to be open all time as it uses it not only to build the index but only to resolve content later.
@@ -53,8 +45,8 @@ pub struct TarIndex<'f> {
     /// Maps <ino>/<file_name> to the INode
     child_map: ChildMap,
 
-    /// Maps ino to the INode
-    inode_map: INodeMap,
+    /// Maps <ino> to the IndexEntry
+    ino_map: INodeMap,
 }
 
 impl<'f> TarIndex<'f> {
@@ -62,22 +54,25 @@ impl<'f> TarIndex<'f> {
         TarIndex {
             file: file,
             child_map: BTreeMap::new(),
-            inode_map: BTreeMap::new(),
+            ino_map: BTreeMap::new(),
         }
     }
 
-    pub fn get_node_by_ino(&self, ino: u64) -> Option<&Rc<INode>> {
-        self.inode_map.get(&ino)
+    pub fn get_entry_by_ino(&self, ino: u64) -> Option<&Rc<IndexEntry>> {
+        self.ino_map.get(&ino)
     }
 
-    pub fn lookup_child(&self, parent_ino: u64, path: PathBuf) -> Option<&Rc<INode>> {
+    pub fn lookup_child(&self, parent_ino: u64, path: PathBuf) -> Option<&Rc<IndexEntry>> {
         let key = self.lookup_key(parent_ino, path.as_os_str());
         self.child_map.get(&key)
     }
 
-    pub fn read(&mut self, node: &INode, offset: u64, size: u64) -> Result<Vec<u8>, io::Error> {
-        let offset_in_file = node.entry.raw_file_offset + (offset as u64);
-        let file_end = node.entry.raw_file_offset + node.entry.filesize;
+    pub fn read(&mut self, entry: &IndexEntry, offset: u64, size: u64) -> Result<Vec<u8>, io::Error> {
+        // TODO Support sparse tar files
+        let part1 = &entry.file_offsets[0];
+
+        let offset_in_file = part1.raw_file_offset + (offset as u64);
+        let file_end = part1.raw_file_offset + part1.filesize;
         let left = file_end - offset_in_file;
         trace!("offset {}, size {}, off_f {}, file_end {}, left {}", offset, size, offset_in_file, file_end, left);
 
@@ -95,10 +90,10 @@ impl<'f> TarIndex<'f> {
         }
     }
 
-    pub fn insert(&mut self, new_node: Rc<INode>) {
-        let ino = new_node.ino;
-        if let Some(parent_id) = new_node.parent_id {
-            let path = new_node.entry.path.as_path();
+    pub fn insert(&mut self, new_entry: Rc<IndexEntry>) {
+        let ino = new_entry.ino;
+        if let Some(parent_id) = new_entry.parent_ino {
+            let path = new_entry.path.as_path();
             let filename = match path.file_name() {
                 Some(n) => n,
                 None => {
@@ -107,9 +102,9 @@ impl<'f> TarIndex<'f> {
                 }
             };
             let key = self.lookup_key(parent_id, filename);
-            self.child_map.insert(key, new_node.clone());
+            self.child_map.insert(key, new_entry.clone());
         }
-        self.inode_map.insert(ino, new_node);
+        self.ino_map.insert(ino, new_entry);
     }
 
     fn lookup_key(&self, id: u64, filename: &OsStr) -> PathBuf {
@@ -123,7 +118,7 @@ impl<'f> TarIndex<'f> {
 impl fmt::Display for TarIndex<'_> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let mut content = String::new();
-        for (_, node) in self.inode_map.iter() {
+        for (_, node) in self.ino_map.iter() {
             content.push_str(&format!("{:?}", node));
         }
         write!(f, "Index: \n{{{}\n}}", content)
