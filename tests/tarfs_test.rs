@@ -13,6 +13,9 @@ use walkdir::WalkDir;
 mod common;
 use common::TarFsTest;
 
+const HARDLINK_DST: &str = "hardlinkToa";
+const HARDLINK_SRC: &str = "a";
+
 fn ls_al(path: &str) -> Result<String, Box<dyn std::error::Error>> {
     let out = Command::new("ls")
             .args(&["-al", path])
@@ -41,7 +44,19 @@ fn tarfs_ls() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn tarfs_recursive_compare() -> Result<(), Box<dyn std::error::Error>> {
-    let test = TarFsTest::new("tests/ar.dir");
+    let src_path = "tests/ar.dir";
+    let test = TarFsTest::new(src_path);
+
+    // Create hard link
+    let mut src = PathBuf::from(src_path);
+    src.push(HARDLINK_SRC);
+    let mut dst = PathBuf::from(src_path);
+    dst.push(HARDLINK_DST);
+
+    if dst.exists() {
+        fs::remove_file(&dst)?;
+    }
+    fs::hard_link(&src, &dst)?;
 
     test.perform(|mountpoint| {
         let path_cmp = |e1: &walkdir::DirEntry, e2: &walkdir::DirEntry| {
@@ -113,9 +128,9 @@ fn tarfs_hard_link() -> Result<(), Box<dyn std::error::Error>> {
 
     test.perform(|mountpoint| {
         let mut exp_link_path = PathBuf::from(mountpoint);
-        exp_link_path.push("a");
+        exp_link_path.push(HARDLINK_SRC);
         let mut act_link_path = PathBuf::from(mountpoint);
-        act_link_path.push("hardlinkToa");
+        act_link_path.push(HARDLINK_DST);
 
         use std::os::unix::fs::MetadataExt;
         let exp_meta = fs::metadata(&exp_link_path)?;
