@@ -15,10 +15,14 @@ use tarfs::TarFs;
 
 #[derive(Debug, Fail)]
 pub enum TarFsError {
-    #[fail(display = "{}", text)]
+    #[fail(display = "{}", msg)]
     MountError {
-        text: String,
+        msg: String,
     },
+    #[fail(display = "{}", msg)]
+    IndexError {
+        msg: String,
+    }
 }
 
 pub fn setup_tar_mount(filepath: &Path, mountpoint: &Path, start_signal: Option<mpsc::SyncSender<()>>) -> Result<(), Error> {
@@ -48,7 +52,7 @@ pub fn setup_tar_mount(filepath: &Path, mountpoint: &Path, start_signal: Option<
 
 fn ensure_mountpoint_dir_exists(mountpoint: &Path) -> Result<(), TarFsError> {
     if !mountpoint.exists() || !mountpoint.is_dir() {
-        return Err(TarFsError::MountError{ text: String::from("mountpoint is not a directory")}.into());
+        return Err(TarFsError::MountError{ msg: String::from("mountpoint is not a directory")}.into());
     }
     Ok(())
 }
