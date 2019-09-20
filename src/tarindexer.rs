@@ -13,8 +13,11 @@ use time::Timespec;
 use tar::EntryType;
 use fuse::FileType;
 
+use failure::Error;
+use super::TarFsError::IndexError;
+
 use log;
-use log::{info, error};
+use log::{info};
 
 use crate::tarindex::{TarIndex, IndexEntry, TarEntryPointer};
 
@@ -48,7 +51,7 @@ pub struct Permissions {
 pub struct TarIndexer {}
 
 impl TarIndexer {
-    pub fn build_index_for<'f>(&self, file: &'f File, options: &Options) -> Result<TarIndex<'f>, io::Error> {
+    pub fn build_index_for<'f>(&self, file: &'f File, options: &Options) -> Result<TarIndex<'f>, Error> {
         let now = Instant::now();
         info!("Starting indexing archive...");
 
@@ -94,8 +97,8 @@ impl TarIndexer {
             let mut pe = path_entry.borrow_mut();
             let pe_index_entry = &mut pe.index_entry;
             if pe_index_entry.is_some() {
-                error!("Found double entry for path {}, quitting!", tar_entry.path.display());
-                return Ok(index)    // TODO custom error type io::Error | IndexError
+                let err_msg = format!("Found double entry for path {}, quitting!", tar_entry.path.display());
+                return Err(IndexError { msg: err_msg }.into());
             }
 
             // Create IndexEntry
