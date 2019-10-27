@@ -1,5 +1,7 @@
 # tarfs
 
+[![Setup Automated](https://img.shields.io/badge/setup-automated-blue?logo=gitpod)](https://gitpod.io/#https://github.com/geropl/tarfs)  Developed 100% on [gitpod.io](https://gitpod.io)
+
 A readonly FUSE filesystem that allows to mount tar files
 
 ## Usage
@@ -40,20 +42,3 @@ TODO
 ```
 
  [![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/geropl/tarfs)
-
-### ToDo
- - [ ] hard links
- - [ ] optimize reads by using a buffered reader
- - [ ] try to create static binary by replacing relevant parts in https://github.com/zargony/rust-fuse
-   - syscalls:
-     - libc::umount
-     - libc::writev
-     - libc::close
-     - libc::read
-   - types:
-     - libc::iovec
-     - ... and a lot more
-   - fuse
-     - pub fn fuse_mount_compat25(mountpoint: *const c_char, args: *const fuse_args) -> c_int;
-     - pub fn fuse_unmount_compat22(mountpoint: *const c_char);
- - [ ] ...
