@@ -3,6 +3,8 @@ use failure::Fail;
 mod tarindex;
 mod tarindexer;
 mod tarfs;
+mod utils;
+mod arena;
 
 use failure::Error;
 

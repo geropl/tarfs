@@ -11,12 +11,13 @@ use time::Timespec;
 use libc::{ENOENT, ENODATA};
 
 use fuse;
-use fuse::{FileAttr, FileType, Filesystem, Request, ReplyAttr, ReplyEntry, ReplyDirectory, ReplyData};
+use fuse::{FileType, Filesystem, Request, ReplyAttr, ReplyEntry, ReplyDirectory, ReplyData};
 
 use log;
 use log::{debug, info, error, trace};
 
 use super::tarindex::{TarIndex};
+use super::utils::default_fuse_file_attr;
 
 const NAME_OPTIONS: &[&str] = &[
     "fsname=tarfs",
@@ -73,8 +74,8 @@ fn fuse_optionize<'a>(os: &Vec<&'a str>) -> Vec<&'a OsStr> {
 impl<'f> Filesystem for TarFs<'f> {
     fn init(&mut self, _req: &Request) -> Result<(), i32> {
         // Signal start
-        if let Err(_) = self.start_signal.send(()) {
-            // Do nothing
+        if let Err(err) = self.start_signal.send(()) {
+            debug!("error sending start signal: {}", err);
         }
         Ok(())
     }
@@ -88,7 +89,7 @@ impl<'f> Filesystem for TarFs<'f> {
             None => {
                 // According to https://github.com/libfuse/libfuse/blob/master/include/fuse_lowlevel.h#L60
                 // this enables caching of none-entries (negative caching)
-                let attrs = emtpy_attr();
+                let attrs = default_fuse_file_attr();
                 reply.entry(&ttl_max(), &attrs, 0);
                 // reply.error(ENOENT);
                 debug!("lookup: no entry");
@@ -134,7 +135,7 @@ impl<'f> Filesystem for TarFs<'f> {
         if offset == 0 {
             let off = 1;
             let kind = FileType::Directory;
-            full = reply.add(entry.ino, off, kind, ".");
+            full = reply.add(entry.ino(), off, kind, ".");
             trace!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, ".");
             if full {
                 reply.ok();
@@ -145,7 +146,7 @@ impl<'f> Filesystem for TarFs<'f> {
         if offset <= 1 {
             // Handle fs root: same ino as
             let ino = match entry.parent_ino {
-                None => entry.ino,
+                None => entry.ino(),
                 Some(ino) => ino,
             };
 
@@ -161,8 +162,8 @@ impl<'f> Filesystem for TarFs<'f> {
 
         let children_offset = (offset - 2).max(0);
         let mut off: i64 = 2 + children_offset + 1;
-        for child in &entry.children.borrow()[children_offset as usize..] {
-            let ino = child.ino;
+        for child in self.index.children_iter(entry).skip(children_offset as usize) {
+            let ino = child.ino();
             let kind = child.attrs.kind;
             let name = &child.name;
             trace!("reply.add inode {}, offset {}, file_type {:?}, base {} ", ino, off, kind, name.display());
@@ -222,25 +223,6 @@ impl<'f> Filesystem for TarFs<'f> {
                 return
             }
         }
-    }
-}
-
-fn emtpy_attr() -> FileAttr {
-    FileAttr {
-        ino: 0,
-        size: 0,
-        blocks: 0,
-        atime: Timespec::new(0, 0),
-        mtime: Timespec::new(0, 0),
-        ctime: Timespec::new(0, 0),
-        crtime: Timespec::new(0, 0),
-        kind: FileType::RegularFile,
-        perm: 0,
-        nlink: 0,
-        uid: 0,
-        gid: 0,
-        rdev: 0,
-        flags: 0,
     }
 }
 

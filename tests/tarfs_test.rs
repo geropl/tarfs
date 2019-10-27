@@ -5,6 +5,7 @@ use std::process::Command;
 use std::str;
 use std::fs;
 use std::path::PathBuf;
+use std::cmp::Ordering;
 
 #[cfg(test)]
 use pretty_assertions::{assert_eq};
@@ -15,13 +16,6 @@ use common::TarFsTest;
 
 const HARDLINK_DST: &str = "hardlinkToa";
 const HARDLINK_SRC: &str = "a";
-
-fn ls_al(path: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let out = Command::new("ls")
-            .args(&["-al", path])
-            .output()?;
-    Ok(str::from_utf8(&out.stdout)?.to_owned())
-}
 
 #[test]
 #[ignore]
@@ -47,47 +41,42 @@ fn tarfs_recursive_compare() -> Result<(), Box<dyn std::error::Error>> {
     let src_path = "tests/ar.dir";
     let test = TarFsTest::new(src_path);
 
-    // Create hard link
-    let mut src = PathBuf::from(src_path);
-    src.push(HARDLINK_SRC);
-    let mut dst = PathBuf::from(src_path);
-    dst.push(HARDLINK_DST);
-
-    if dst.exists() {
-        fs::remove_file(&dst)?;
-    }
-    fs::hard_link(&src, &dst)?;
+    setup_hard_link(src_path)?;
+    println!("successfully prepared test");
 
     test.perform(|mountpoint| {
-        let path_cmp = |e1: &walkdir::DirEntry, e2: &walkdir::DirEntry| {
-            e1.path().partial_cmp(e2.path()).unwrap_or(std::cmp::Ordering::Greater)
-        };
-
         // Sort paths, start with root's children
         let mountpoint_str = mountpoint.to_str().unwrap();
-        let mut expected_it = WalkDir::new("tests/ar.dir").sort_by(path_cmp).min_depth(1).into_iter();
-        let mut actual_it = WalkDir::new(mountpoint_str).sort_by(path_cmp).min_depth(1).into_iter();
+        let mut expected_it = WalkDir::new("tests/ar.dir")
+            .sort_by(path_cmp)
+            .min_depth(1)
+            .into_iter();
+        let mut actual_it = WalkDir::new(mountpoint_str)
+            .sort_by(path_cmp)
+            .min_depth(1)
+            .into_iter();
 
         loop {
             match (expected_it.next(), actual_it.next()) {
                 (None, Some(actual)) => panic!("Found more entries than expected: {}", actual?.path().display()),
                 (Some(expected), None) => panic!("Expected more entries: {}", expected?.path().display()),
-                (Some(expected), Some(actual)) => {
-                    let act_dir_entry = actual?;
-                    let is_root_dir = act_dir_entry.path().to_str().unwrap() == mountpoint_str;
-                    println!("{}", PathBuf::from(act_dir_entry.path()).as_path().display());
+                (Some(Err(err)), _) => panic!("Error iterating 'expectation' dir: {}", err),
+                (_, Some(Err(err))) => panic!("Error iterating 'actual' dir: {}", err),
+                (Some(Ok(expected)), Some(Ok(actual))) => {
+                    let is_root_dir = actual.path().to_str().unwrap() == mountpoint_str;
+                    println!("testing: {}", PathBuf::from(actual.path()).as_path().display());
 
                     use std::os::unix::fs::MetadataExt; // Use unix specific trait methods
-                    let exp_meta = fs::metadata(expected?.path())?;
-                    let act_meta = fs::metadata(act_dir_entry.path())?;
+                    let exp_meta = fs::metadata(expected.path())?;
+                    let act_meta = fs::metadata(actual.path())?;
 
                     // File types
                     assert_eq!(exp_meta.file_type().is_dir(), act_meta.file_type().is_dir(), "is dir");
                     assert_eq!(exp_meta.file_type().is_file(), act_meta.file_type().is_file(), "is file");
                     assert_eq!(exp_meta.file_type().is_symlink(), act_meta.file_type().is_symlink(), "is symlink");
 
-                    // TODO hard links
-                    // assert_eq!(exp_meta.nlink(), act_meta.nlink(), "nlink");
+                    // Hard links
+                    assert_eq!(exp_meta.nlink(), act_meta.nlink(), "nlink");
 
                     // Times
                     if !is_root_dir {
@@ -122,9 +111,13 @@ fn tarfs_recursive_compare() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
-#[ignore]
+#[ignore]   // TODO Should word with hard links, why doesn't it??
 fn tarfs_hard_link() -> Result<(), Box<dyn std::error::Error>> {
-    let test = TarFsTest::new("tests/ar.dir");
+    let src_path = "tests/ar.dir";
+    let test = TarFsTest::new(src_path);
+
+    setup_hard_link(src_path)?;
+    println!("successfully prepared test");
 
     test.perform(|mountpoint| {
         let mut exp_link_path = PathBuf::from(mountpoint);
@@ -141,5 +134,32 @@ fn tarfs_hard_link() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     })?;
 
+    Ok(())
+}
+
+// Utils
+fn ls_al(path: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let out = Command::new("ls")
+            .args(&["-al", path])
+            .output()?;
+    Ok(str::from_utf8(&out.stdout)?.to_owned())
+}
+
+fn path_cmp(e1: &walkdir::DirEntry, e2: &walkdir::DirEntry) -> Ordering {
+    e1.path()
+        .partial_cmp(e2.path())
+        .unwrap_or(std::cmp::Ordering::Greater)
+}
+
+fn setup_hard_link(src_path: &str) -> std::io::Result<()> {
+    let mut src = PathBuf::from(src_path);
+    src.push(HARDLINK_SRC);
+    let mut dst = PathBuf::from(src_path);
+    dst.push(HARDLINK_DST);
+
+    if dst.exists() {
+        fs::remove_file(&dst)?;
+    }
+    fs::hard_link(&src, &dst)?;
     Ok(())
 }

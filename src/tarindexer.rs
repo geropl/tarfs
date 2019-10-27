@@ -1,9 +1,9 @@
 use std::fs::File;
 use std::io;
-use std::{path::Path, path::PathBuf};
+use std::path::PathBuf;
 use std::collections::BTreeMap;
-use std::rc::Rc;
 use std::cell::{RefCell};
+use std::rc::Rc;
 use std::vec::Vec;
 use std::time::{SystemTime, UNIX_EPOCH, Instant};
 use std::collections::HashMap;
@@ -21,22 +21,13 @@ use log::{info};
 
 use crate::tarindex::{TarIndex, IndexEntry, TarEntryPointer};
 
-/// This is a placeholder struct used by the TarIndexer to be able to create entries for not-yet-read tar entries
-/// (in case children are read before their parents, for example)
-#[derive(Debug)]
-struct PathEntry {
-    pub id: u64,
-    pub children: Ptr<Vec<Rc<IndexEntry>>>,
-    pub index_entry: Option<Rc<IndexEntry>>,
-}
-
 /// Shorthand type
 type Ptr<T> = Rc<RefCell<T>>;
 fn ptr<T>(t: T) -> Ptr<T> {
     Rc::new(RefCell::new(t))
 }
 
-type PathMap = BTreeMap<PathBuf, Ptr<PathEntry>>;
+type PathMap<'e> = BTreeMap<PathBuf, Ptr<IndexEntry>>;
 
 pub struct Options {
     pub root_permissions: Permissions,
@@ -56,7 +47,6 @@ impl TarIndexer {
         info!("Starting indexing archive...");
 
         let mut archive: tar::Archive<&File> = tar::Archive::new(file);
-        let mut index = TarIndex::new(file);
 
         // Use sequential ino numbers
         let mut inode_id = 1;
@@ -70,73 +60,91 @@ impl TarIndexer {
         let mut path_map: PathMap = BTreeMap::new();
         let root_entry = self.create_root_entry(get(&mut inode_id), &options.root_permissions);
         let root_path = root_entry.path.to_owned();
-        let root_pe = PathEntry {
-            id: root_entry.ino,
-            children: root_entry.children.clone(),
-            index_entry: Some(Rc::new(root_entry)),
-        };
-        path_map.insert(root_path, ptr(root_pe));
+        path_map.insert(root_path, ptr(root_entry));
 
         // Iterate tar entries
         for (idx, entry) in archive.entries()?.enumerate() {
             let tar_entry = self.entry_to_tar_entry(idx as u64, &mut entry?)?;
+            //println!("{:?}", &tar_entry);
 
             // Find parent!
             let parent_path = tar_entry.path.parent().expect("a tar entry without parent component!");
-            let parent_pe = self.get_or_create_path_entry(&mut path_map, parent_path, || {
-                get(&mut inode_id)
-            });
+            let (parent_ino, parent) = self.get_or_create_path_entry(&mut path_map, &PathBuf::from(parent_path), || get(&mut inode_id));
 
             // Entry already present?
-            let path_entry = self.get_or_create_path_entry(&mut path_map, &tar_entry.path, || {
-                get(&mut inode_id)
-            });
-
-            let ino = path_entry.borrow().id;
-            let children = path_entry.borrow().children.clone();
-            let mut pe = path_entry.borrow_mut();
-            let pe_index_entry = &mut pe.index_entry;
-            if pe_index_entry.is_some() {
-                let err_msg = format!("Found double entry for path {}, quitting!", tar_entry.path.display());
-                return Err(IndexError { msg: err_msg }.into());
-            }
+            let (ino, index_entry) = self.get_or_create_path_entry(&mut path_map, &tar_entry.path, || get(&mut inode_id));
 
             // Create IndexEntry
-            let index_entry = tar_entry.to_index_entry(ino, Some(parent_pe.borrow().id), children);
-            let rc_index_entry = Rc::new(index_entry);
-
-            // Set index entry
-            pe_index_entry.replace(rc_index_entry.clone());
+            let is_hard_link = tar_entry.is_hard_link();
+            tar_entry.set_to_index_entry(&mut index_entry.borrow_mut(), ino, Some(parent_ino));
 
             // Add itself to parents children
-            parent_pe.borrow_mut().children.borrow_mut().push(rc_index_entry.clone());
+            parent.borrow_mut().children.push(index_entry.borrow().id);
+
+            // Hard link? Bump nlink count for link_name
+            if is_hard_link {
+                let target_attrs = {
+                    let index_entry_ref = &index_entry.borrow();
+                    let link_name = &index_entry_ref.link_name;
+                    if link_name.is_none() {
+                        let err_msg = format!("Found link without link_name {}, quitting!", index_entry_ref.path.display());
+                        return Err(IndexError { msg: err_msg }.into());
+                    }
+                    let (_, link_target) = self.get_or_create_path_entry(&mut path_map, &link_name.as_ref().unwrap(), || get(&mut inode_id));
+                    let mut link_target_mut = link_target.borrow_mut();
+                    link_target_mut.link_count += 1;
+                    link_target_mut.attrs.nlink += 1;
+                    link_target_mut.attrs.clone()
+                };
+                let mut index_entry_mut = index_entry.borrow_mut();
+                index_entry_mut.link_target_ino = Some(target_attrs.ino);
+                index_entry_mut.attrs = target_attrs;
+            }
         }
 
         // Actually insert entries into index
-        for (_, path_entry) in path_map {
-            let pe = path_entry.borrow();
-            let index_entry = pe.index_entry.as_ref().expect(&format!("Found PathEntry without IndexEntry: {:?}", pe));
-            index.insert(index_entry.clone());
+        let mut index = TarIndex::new(file, path_map.len());
+
+        // In order to get the IndexEntry out of Rc<RefCell<>> we have to:
+        //  - get ownership of the Rc
+        //  - to do so we have to remove() it from path_map
+        //  - to do so for all entries we need a list of copies of all keys
+        let keys: Vec<PathBuf> = path_map.iter()
+            .map(|(k, _)| PathBuf::from(k))
+            .collect();
+        for k in keys {
+            let index_entry_rc = path_map.remove(&k).unwrap();  // Impossible to have an entry without value here
+            let id = index_entry_rc.borrow().id;
+            let index_entry_res = Rc::try_unwrap(index_entry_rc);
+            if let Err(_) = index_entry_res {
+                return Err(IndexError {
+                    msg: format!("Unexpected multiple link to index_entry {}, quitting!", id)
+                }.into());
+            }
+            let index_entry_refc = index_entry_res.unwrap();
+            index.insert(index_entry_refc.into_inner());
         }
 
         info!("Done indexing archive. Took {}s.", now.elapsed().as_secs());
         Ok(index)
     }
 
-    fn get_or_create_path_entry<F>(&self, path_map: &mut PathMap, path: &Path, mut get_ino: F) -> Ptr<PathEntry>
+    fn get_or_create_path_entry<IdSource>(&self, path_map: &mut PathMap, path: &PathBuf, mut get_id: IdSource) -> (u64, Ptr<IndexEntry>)
         where
-            F: FnMut() -> u64 {
+            IdSource: FnMut() -> u64 {
         match path_map.get(path) {
             None => {
-                let pe = ptr(PathEntry {
-                    id: get_ino(),
-                    children: ptr(vec!()),
-                    index_entry: None,
-                });
-                path_map.insert(path.to_owned(), pe.clone());
-                (pe)
+                let id = get_id();
+                let mut entry = IndexEntry::default();
+                entry.id = id;
+                let entry_ptr = ptr(entry);
+                path_map.insert(path.to_owned(), entry_ptr.clone());
+                (id, entry_ptr)
             },
-            Some(pe) => pe.clone(),
+            Some(entry) => {
+                let id = entry.borrow().id;
+                (id, entry.clone())
+            },
         }
     }
 
@@ -161,7 +169,9 @@ impl TarIndexer {
             ctime: now,
             ftype: tar::EntryType::Directory,
         };
-        root_tar_entry.to_index_entry(ino, None, ptr(vec!()))
+        let mut root_entry = IndexEntry::default();
+        root_tar_entry.set_to_index_entry(&mut root_entry, ino, None);
+        root_entry
     }
 
     fn entry_to_tar_entry(&self, index: u64, entry: &mut tar::Entry<'_, &File>) -> Result<TarEntry, io::Error> {
@@ -214,6 +224,11 @@ impl TarIndexer {
             let key: &str = key.unwrap();
             let value: &str = ext.value().unwrap_or("");
             result.insert(key.to_owned(), value.to_owned());
+
+            // let r = TarIndexer::debug_print_pax_extension(ext);
+            // if let Err(_e) = r {
+            //     continue;
+            // }
         }
         Ok(result)
     }
@@ -253,7 +268,7 @@ impl TarIndexer {
         }
     }
 
-    // fn debug_print_pax_extension(ext: tar::PaxExtension) -> Result<(), Utf8Error> {
+    // fn debug_print_pax_extension(ext: tar::PaxExtension) -> Result<(), std::str::Utf8Error> {
     //     let k = ext.key()?;
     //     let v = ext.value()?;
     //     println!("key: {} | value: {}", k, v);
@@ -281,36 +296,50 @@ struct TarEntry {
 }
 
 impl TarEntry {
-    fn to_index_entry(self, ino: u64, parent_ino: Option<u64>, children: Rc<RefCell<Vec<Rc<IndexEntry>>>>) -> IndexEntry {
-        let attrs = self.attrs(ino);
-        IndexEntry {
-            ino,
-            parent_ino,
+    fn set_to_index_entry(self, entry: &mut IndexEntry, id: u64, parent_ino: Option<u64>) -> () {
+        entry.id = id;
+        entry.parent_ino = parent_ino;
+        entry.attrs = self.attrs(id);
+        entry.path = self.path;
+        entry.name = self.name;
+        entry.link_name = self.link_name;
+        entry.file_offsets.push(TarEntryPointer {
+            raw_file_offset: self.raw_file_offset,
+            filesize: self.filesize,
+        });
+    }
 
-            path: self.path,
-            name: self.name,
-            link_name: self.link_name,
-            attrs,
-
-            file_offsets: vec!(TarEntryPointer {
-                raw_file_offset: self.raw_file_offset,
-                filesize: self.filesize,
-            }),
-
-            children,
-        }
+    fn is_hard_link(&self) -> bool {
+        self.ftype == tar::EntryType::Link
     }
 
     fn attrs(&self, ino: u64) -> fuse::FileAttr {
-        let kind = tar_entrytype_to_filetype(self.ftype);
+        let kind = match self.ftype {
+            EntryType::Regular => FileType::RegularFile,
+            EntryType::Directory => FileType::Directory,
+            EntryType::Symlink => FileType::Symlink,
+            EntryType::Link => FileType::RegularFile,
+            t => {
+                println!("Unsupported EntryType: {:?}", t);
+                FileType::RegularFile
+            },
+        };
+
         let size = match &self.link_name {
             // For symlinks, fuse/the kernel wants the length of the OsStr...
             Some(ln) => ln.as_os_str().len() as u64,
-            None => match kind {
-                fuse::FileType::Directory => 4096,    // We're mimicking ext4 here
+            None => match self.ftype {
+                tar::EntryType::Link => 0,  // hard link
+                tar::EntryType::Directory => 4096,    // We're mimicking ext4 here
                 _ => self.filesize,       // The default case: Size "on disk" is the same as the size in the tar (uncompressed) archive
             },
         };
+
+        let nlink = match &self.ftype {
+            tar::EntryType::Directory => 2,
+            _ => 1,
+        };
+
         fuse::FileAttr {
             ino,
             size,
@@ -321,24 +350,11 @@ impl TarEntry {
             crtime: self.ctime, // macOS only
             kind,
             perm: self.mode as u16,
-            nlink: 1,
+            nlink,
             uid: self.uid as u32,
             gid: self.gid as u32,
             rdev: 0,
             flags: 0,
         }
-    }
-}
-
-fn tar_entrytype_to_filetype(ftype: tar::EntryType) -> fuse::FileType {
-    match ftype {
-        EntryType::Regular => FileType::RegularFile,
-        EntryType::Directory => FileType::Directory,
-        EntryType::Symlink => FileType::Symlink,
-        t => {
-            println!("Unsupported EntryType: {:?}", t);
-            FileType::RegularFile
-        },
-        // EntryType::Link => FileType::
     }
 }
