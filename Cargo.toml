@@ -1,7 +1,13 @@
 [package]
 name = "tarfs"
 version = "0.1.0"
-authors = ["geropl <gero.posmyk-leinemann@typefox.io>"]
+description = "A readonly FUSE filesystem that allows to mount tar files"
+homepage = "https://github.com/geropl/tarfs"
+repository = "https://github.com/geropl/tarfs"
+keywords = ["tar", "fuse", "filesystem"]
+categories = ["filesystem"]
+license = "MIT"
+authors = ["geropl <gero.posmyk+github@posteo.de>"]
 edition = "2018"
 
 [lib]
