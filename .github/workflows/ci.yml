@@ -13,7 +13,7 @@ jobs:
           toolchain: stable
           target: actions-rs/toolchain
           override: true
-      - run: rustup component add rustfmt 
+      - run: rustup component add rustfmt rust-std
       - run: sudo apt-get install -yq fuse libfuse-dev musl
       - uses: actions-rs/cargo@v1
         with:
