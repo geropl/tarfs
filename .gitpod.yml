@@ -5,7 +5,6 @@ tasks:
 - command: "cargo watch -x check"
   openIn: right
   openMode: tab-before
-privileged: true
 
 vscode:
   extensions:
